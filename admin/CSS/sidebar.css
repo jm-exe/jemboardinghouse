@@ -1,0 +1,111 @@
+
+  
+  html, body {
+    height: 100%;
+    margin: 0;
+    padding: 0;
+  }
+  
+  .sidebar {
+    position: fixed; /* Keep it fixed */
+    top: 0;
+    left: 0;
+    height: 100vh;
+    width: 300px;
+    background-color: #20450d;
+    color: white;
+    padding: 15px;
+    overflow-y: auto;
+    z-index: 999;
+  }
+  
+  .main-content {
+    margin-left: 300px; /* push the main content */
+    padding: 20px;
+    margin-left: 300px;
+    flex-grow: 1;
+    min-height: 100vh;
+    background-color: #f8f9fa;
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+  }
+  
+  
+  .sidebar {
+    width: 300px;
+    background-color: #20450d;
+    color: white;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    padding: 15px;
+    height: 100vh;
+    position: fixed; /* <-- important */
+    top: 0;
+    left: 0;
+    overflow-y: auto;
+    z-index: 1000; /* Make sure it's on top */
+  }
+  
+  
+  .profile i {
+    font-size: 50px;
+    color: #ffffff;
+  }
+  
+  .welcome-text {
+    font-family: 'Monaco', monospace;
+    font-size: 22px;
+    font-weight: bold;
+    color: #ffffff;
+  }
+  
+  .sidebar .nav-link {
+    color: white;
+    font-family: Verdana, Geneva, Tahoma, sans-serif;
+    font-size: 16px;
+  }
+  
+  .sidebar .nav-link:hover {
+    color: #a1bb94;
+    background-color: #2f8656;
+  }
+  
+  .divider-line {
+    height: 1px;
+    background-color: #2f8656;
+    margin: 0.5rem 0;
+  }
+  
+  .sidebar .nav-link:focus,
+  .sidebar .nav-link:active,
+  .sidebar .nav-link.active {
+    color: #a1bb94 !important;
+    background-color: #2f8656 !important;
+    outline: none;
+  }
+
+.header-container {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 15px 20px;
+  border-bottom: 2px solid #a1bb94;
+}
+
+.logo-container img {
+  width: 100px;
+  height: auto;
+}
+
+.datetime-container {
+  text-align: right;
+}
+
+.datetime {
+  font-size: 18px;
+  color: #2f8656;
+  font-family: 'Monaco', monospace;
+  font-weight: bold;
+}

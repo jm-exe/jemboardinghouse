@@ -1,0 +1,240 @@
+login.php
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+  }
+  
+
+  body {
+    background-image: url('../Pictures/loginbg2.jpg'); /* replace with your image path */
+    background-size: cover;        /* Make it fill the screen */
+    background-position: center;   /* Center the image */
+    background-repeat: no-repeat;  /* Prevent tiling */
+    background-attachment: fixed;  /* Optional: Keep image fixed during scroll */
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    
+  }
+
+
+  
+  
+  .container {
+    display: flex;
+    height: 100vh;
+  }
+
+  .main-content {
+    margin-left: 300px; /* same width as sidebar */
+    padding: 20px;
+  }
+  
+  
+  /* Left Panel */
+  .left-panel {
+    flex: 1;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    padding: 40px;
+  }
+  
+  .branding {
+    max-width: 400px;
+    color: #198d6a;
+  }
+  
+  .branding .icon {
+    font-size: 50px;
+    margin-bottom: 10px;
+  }
+  
+  .branding h1 {
+    font-size: 32px;
+    font-weight: bold;
+  }
+  
+  .branding h3 {
+    margin-top: 10px;
+    font-size: 18px;
+    color: #25ae4e;
+  }
+  
+  .branding p {
+    margin: 20px 0;
+    color: #444;
+  }
+  
+  .features p {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: #337ab7;
+    font-size: 14px;
+    margin-bottom: 6px;
+  }
+  
+  /*------------------------------------------------------------------------------------------------*/
+  .right-panel 
+  {
+    flex: 1;
+    background: rgba(161, 187, 148, 0.8);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    box-shadow: -4px 0 12px rgba(0, 0, 0, 0.05);
+  }
+  
+  /* New wrapper for centering all contents */
+  .login-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    margin-top: 40px; /* pushes down from the top */
+  }
+  
+  /* Logo styling */
+  .image-class {
+    width: 250px;
+    height: auto;
+    margin-bottom: 20px;
+    display: block;
+  margin: 0 auto 20px auto;
+  }
+  
+  /* Your existing input + form styles remain */
+  .login-form {
+
+    padding: 40px;
+    border-radius: 10px;
+    width: 100%;
+    max-width: 350px;
+    transform: translateY(-85px); /* move it up */
+    transition: 0.3s ease;
+    /*box-shadow: 0 0 12px rgba(0, 0, 0, 0.08);*/
+  }
+  
+  .input-group {
+    position: relative;
+    margin-bottom: 20px;
+  }
+  
+  .input-group input 
+  {
+    width: 250px;
+    padding: 10px 10px 10px 10px;
+    border: 1px solid #ccc;
+    border-radius: 6px;
+    font-size: 14px;
+    margin: 0 auto;
+    display: block;
+  }
+
+  .login-form input[type="text"],
+.login-form input[type="password"] {
+  width: 100%;
+  padding: 12px 15px;
+  margin-bottom: 15px;
+  border: 1px solid #ccc;
+  border-radius: 8px;
+  font-size: 14px;
+  background-color: rgba(255, 255, 255, 0.6);
+  transition: 0.3s ease;
+}
+
+.login-form input[type="text"]:focus,
+.login-form input[type="password"]:focus
+ {
+  border-color: #1fa864;
+  outline: none;
+  background-color: #fff;
+  box-shadow: 0 0 5px rgba(31, 168, 100, 0.3);
+}
+
+.login-form label {
+  font-size: 18px;
+  font-weight: bold;
+  color: #ffffff;
+  display: block;
+  margin-bottom: 5px;
+  font-family:  'Monaco', monospace;
+
+}
+
+.signup-link
+{
+  font-size: 16px;
+  font-weight: bold;
+  color: #ffffff;
+  display: block;
+  margin-bottom: 5px;
+  font-family:  'Monaco', monospace;
+}
+
+  
+  .login-form button 
+  {
+    width: 95%;
+    padding: 12px;
+    background: #2f8656;
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    font-size: 16px;
+    cursor: pointer;
+    transition: 0.2s ease;
+    display: block; /* Makes the button a block-level element */
+    margin: 20px auto 0 auto;
+  }
+  
+  .login-form button:hover 
+  {
+    width: 100%;
+    background: #07754b;
+  }
+  
+ /* Styling for the select field to match textfields */
+.signin-form select {
+  width: 100%; /* Ensure it takes up the full width */
+  padding: 10px 15px; /* Match padding to text fields */
+  border: 1px solid #ccc; /* Same border as text fields */
+  border-radius: 6px; /* Match border-radius to text fields */
+  background-color: #fff; /* White background */
+  font-size: 14px; /* Match font size */
+  color: #333; /* Text color */
+  appearance: none; /* Remove default dropdown appearance */
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  box-sizing: border-box; /* Ensure proper box-sizing */
+  transition: all 0.3s ease; /* Smooth transition on focus */
+}
+
+/* Focus state for the select element */
+.signin-form select:focus {
+  border-color: #1fa864; /* Border color when focused */
+  background-color: #fff; /* Background stays white */
+  box-shadow: 0 0 5px rgba(31, 168, 100, 0.3); /* Green shadow on focus */
+  outline: none; /* Remove outline */
+}
+
+/* Custom arrow for the select dropdown */
+.signin-form select {
+  padding-right: 20px; /* Space for the custom arrow */
+  position: relative;
+}
+
+/* Custom arrow using CSS */
+.signin-form select::after {
+  content: "\25BC"; /* Downward triangle */
+  font-size: 14px;
+  position: absolute;
+  right: 10px; /* Position it at the right end */
+  top: 50%; /* Vertically center */
+  transform: translateY(-50%);
+  pointer-events: none; /* Disable pointer events on the arrow */
+}
+
+
+
+ 

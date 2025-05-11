@@ -1,0 +1,44 @@
+
+    body {
+      display: flex;
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    .sidebar {
+      width: 250px;
+      background-color: rgb(6, 64, 43);
+      color: white;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+    }
+
+    .sidebar .nav-link {
+      color: white;
+      font-size: small;
+    }
+
+    .sidebar .nav-link:hover {
+      background-color: rgb(28, 116, 68);
+    }
+
+    .bottom-logo {
+      padding: 1rem;
+      text-align: center;
+    }
+
+    .bottom-logo img {
+      width: 100px;
+      margin-bottom: 10px;
+    }
+
+    .datetime {
+      font-size: 0.9rem;
+    }
+
+    .divider-line, .divider-line-top {
+      height: 1px;
+      background-color: #6c757d;
+      margin: 0.5rem 0;
+    }

@@ -8,7 +8,6 @@ if (!isset($_SESSION['username']) || $_SESSION['role'] !== 'Tenant') {
   header('Location: index.php');
   exit();
 }
-
 $tenant_id=$_SESSION['tenant_id'];
 
 

@@ -22,7 +22,7 @@
         <li><a href="rooms.php" class="nav-link"><i class="fa fa-door-open me-2"></i>Rooms</a></li>
         <li><a href="beds.php" class="nav-link"><i class="fa fa-bed me-2"></i>Beds</a></li>
         <li><a href="#" class="nav-link"><i class="fa fa-dollar me-2"></i>Payments</a></li>
-        <li><a href="#" class="nav-link"><i class="fa fa-bank me-2"></i>Expenses</a></li>
+        <li><a href="expenses.php" class="nav-link"><i class="fa fa-bank me-2"></i>Expenses</a></li>
         <li><a href="suggestions.php" class="nav-link"><i class="bi bi-lightbulb-fill me-2"></i>Suggestions</a></li>
         <li><a href="send-notice.php" class="nav-link"><i class="bi bi-megaphone-fill me-2"></i>Announcement</a></li>
        

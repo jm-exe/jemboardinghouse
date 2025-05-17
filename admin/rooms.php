@@ -2,7 +2,6 @@
 session_start();
 include('../connection/db.php');
 
-
 $error = '';
 
 // Generate CSRF token if not exists
@@ -10,7 +9,7 @@ if (!isset($_SESSION['csrf_token'])) {
     $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
 }
 
-// Function to get next floor number with gap detection (starting from 1)
+// Function to get next floor number with gap detection
 function getNextFloorNumber($conn) {
     $floors = mysqli_query($conn, "SELECT floor_no FROM floors ORDER BY LENGTH(floor_no), floor_no");
     $numbers = [];
@@ -35,7 +34,7 @@ function getNextFloorNumber($conn) {
     return 'FLR-' . (max($numbers) + 1);
 }
 
-// Function to get next room number for a floor with gap detection (starting from 1)
+// Function to get next room number for a floor with gap detection
 function getNextRoomNumber($conn, $floor_id) {
     $rooms = mysqli_query($conn, "SELECT room_no FROM rooms WHERE floor_id = $floor_id ORDER BY LENGTH(room_no), room_no");
     $numbers = [];
@@ -124,14 +123,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_room'], $_POST['f
                 $room_id = mysqli_insert_id($conn);
                 $bed_counter = 1;
                 
-                // Create single deck beds
+                // Create single deck beds (as Lower deck)
                 for ($i = 0; $i < $single_deck_count; $i++) {
                     mysqli_query($conn, "INSERT INTO beds (bed_no, room_id, bed_type, deck, monthly_rent, status) 
-                                       VALUES ($bed_counter, $room_id, 'Single', NULL, " . floatval($_POST['monthly_rent']) . ", 'Vacant')");
+                                       VALUES ($bed_counter, $room_id, 'Single', 'Lower', " . floatval($_POST['monthly_rent']) . ", 'Vacant')");
                     $bed_counter++;
                 }
                 
-                // Create double deck beds (each creates 2 beds - upper and lower)
+                // Create double deck beds (Upper and Lower)
                 for ($i = 0; $i < $double_deck_count; $i++) {
                     // Upper bunk
                     mysqli_query($conn, "INSERT INTO beds (bed_no, room_id, bed_type, deck, monthly_rent, status) 
@@ -219,14 +218,14 @@ if (isset($_POST['edit_room_id'], $_POST['csrf_token'])) {
         
         $bed_counter = 1;
         
-        // Create new single deck beds
+        // Create new single deck beds (as Lower deck)
         for ($i = 0; $i < $new_single_deck_count; $i++) {
             mysqli_query($conn, "INSERT INTO beds (bed_no, room_id, bed_type, deck, monthly_rent, status) 
-                               VALUES ($bed_counter, $room_id, 'Single', NULL, $monthly_rent, 'Vacant')");
+                               VALUES ($bed_counter, $room_id, 'Single', 'Lower', $monthly_rent, 'Vacant')");
             $bed_counter++;
         }
         
-        // Create new double deck beds
+        // Create new double deck beds (Upper and Lower)
         for ($i = 0; $i < $new_double_deck_count; $i++) {
             // Upper bunk
             mysqli_query($conn, "INSERT INTO beds (bed_no, room_id, bed_type, deck, monthly_rent, status) 
@@ -457,6 +456,7 @@ $all_floors = mysqli_query($conn, "SELECT * FROM floors ORDER BY LENGTH(floor_no
             border-radius: 5px;
             padding: 15px;
             margin-top: 15px;
+            border: 1px solid #dee2e6;
         }
         .rent-input {
             max-width: 150px;
@@ -482,6 +482,28 @@ $all_floors = mysqli_query($conn, "SELECT * FROM floors ORDER BY LENGTH(floor_no
         .double-bed {
             background-color: #cce5ff;
             color: #004085;
+        }
+        .deck-info {
+            font-size: 0.75rem;
+            color: #6c757d;
+            margin-top: 0.25rem;
+        }
+        .bed-config-help {
+            background-color: #e2f0fd;
+            border-left: 4px solid #0d6efd;
+            padding: 0.75rem;
+            margin-bottom: 1rem;
+            border-radius: 0.25rem;
+        }
+        .bed-config-warning {
+            background-color: #fff3cd;
+            border-left: 4px solid #ffc107;
+            padding: 0.75rem;
+            margin-bottom: 1rem;
+            border-radius: 0.25rem;
+        }
+        .progress-thin {
+            height: 20px;
         }
     </style>
 </head>
@@ -632,14 +654,21 @@ $all_floors = mysqli_query($conn, "SELECT * FROM floors ORDER BY LENGTH(floor_no
                                 <div class="col-md-12 bed-configuration">
                                     <h6>Bed Configuration</h6>
                                     
+                                    <div class="bed-config-help">
+                                        <i class="fas fa-info-circle me-2"></i>
+                                        Single deck beds are assigned as Lower deck. Each double deck creates 2 beds (upper and lower bunks).
+                                    </div>
+                                    
                                     <div class="row">
                                         <div class="col-md-6">
                                             <label class="form-label">Single Deck Beds</label>
                                             <input type="number" name="single_deck_count" class="form-control" value="0" min="0" max="10">
+                                            <div class="deck-info">Assigned as Lower deck</div>
                                         </div>
                                         <div class="col-md-6">
                                             <label class="form-label">Double Deck Beds</label>
                                             <input type="number" name="double_deck_count" class="form-control" value="0" min="0" max="10">
+                                            <div class="deck-info">Creates 2 beds (Upper + Lower)</div>
                                         </div>
                                     </div>
                                     
@@ -716,15 +745,20 @@ $all_floors = mysqli_query($conn, "SELECT * FROM floors ORDER BY LENGTH(floor_no
                                     // Calculate bed configuration display
                                     $single_count = $row['single_beds'];
                                     $double_count = $row['double_beds'];
+                                    $total_beds = $row['total_beds'];
+                                    $available_beds = $row['available_beds'];
                                     
                                     $bed_config = [];
                                     if ($single_count > 0) {
-                                        $bed_config[] = '<span class="badge bed-badge single-bed">' . $single_count . ($single_count > 1 ? ' Singles' : ' Single') . '</span>';
+                                        $bed_config[] = '<span class="badge bed-badge single-bed">' . $single_count . ' Single (Lower)</span>';
                                     }
                                     if ($double_count > 0) {
-                                        $bed_config[] = '<span class="badge bed-badge double-bed">' . $double_count . ($double_count > 1 ? ' Doubles' : ' Double') . '</span>';
+                                        $bed_config[] = '<span class="badge bed-badge double-bed">' . $double_count . ' Double (Upper/Lower)</span>';
                                     }
                                     $bed_config_display = !empty($bed_config) ? implode(' ', $bed_config) : '<span class="text-muted">No beds</span>';
+                                    
+                                    // Calculate available beds percentage for progress bar
+                                    $available_percentage = $total_beds > 0 ? ($available_beds / $total_beds) * 100 : 0;
                                 ?>
                                 <tr>
                                     <td><?= htmlspecialchars($row['room_no']) ?></td>
@@ -740,7 +774,12 @@ $all_floors = mysqli_query($conn, "SELECT * FROM floors ORDER BY LENGTH(floor_no
                                             <span class="text-muted">No image</span>
                                         <?php endif; ?>
                                     </td>
-                                    <td><?= $bed_config_display ?></td>
+                                    <td>
+                                        <?= $bed_config_display ?>
+                                        <?php if ($double_count > 0): ?>
+                                            <div class="deck-info">Total bunks: <?= $double_count * 2 ?> (<?= $double_count ?> upper + <?= $double_count ?> lower)</div>
+                                        <?php endif; ?>
+                                    </td>
                                     <td>
                                         <?php if ($row['min_rent'] == $row['max_rent']): ?>
                                             ₱<?= number_format($row['min_rent'], 2) ?>
@@ -748,30 +787,34 @@ $all_floors = mysqli_query($conn, "SELECT * FROM floors ORDER BY LENGTH(floor_no
                                             ₱<?= number_format($row['min_rent'], 2) ?> - ₱<?= number_format($row['max_rent'], 2) ?>
                                         <?php endif; ?>
                                     </td>
-                                    <td><?= $row['total_beds'] ?></td>
+                                    <td><?= $total_beds ?></td>
                                     <td>
-                                        <?= $row['available_beds'] ?>
-                                        <?php if ($row['total_beds'] == 0): ?>
-                                            <span class="badge bg-secondary ms-1">No Beds</span>
-                                        <?php elseif ($row['available_beds'] == 0): ?>
-                                            <span class="badge bg-danger ms-1">Full</span>
-                                        <?php elseif ($row['available_beds'] < $row['total_beds']): ?>
-                                            <span class="badge bg-warning text-dark ms-1">Partial</span>
-                                        <?php else: ?>
-                                            <span class="badge bg-success ms-1">All Available</span>
-                                        <?php endif; ?>
+                                        <div class="d-flex align-items-center">
+                                            <div class="progress progress-thin flex-grow-1">
+                                                <div class="progress-bar <?= $available_percentage == 100 ? 'bg-success' : ($available_percentage == 0 ? 'bg-danger' : 'bg-warning') ?>" 
+                                                     role="progressbar" 
+                                                     style="width: <?= $available_percentage ?>%" 
+                                                     aria-valuenow="<?= $available_percentage ?>" 
+                                                     aria-valuemin="0" 
+                                                     aria-valuemax="100">
+                                                </div>
+                                            </div>
+                                            <span class="ms-2"><?= $available_beds ?>/<?= $total_beds ?></span>
+                                        </div>
                                     </td>
-                                    <td>
-                                        <button class="btn btn-warning btn-sm p-1" 
-                                                data-bs-toggle="offcanvas" 
-                                                data-bs-target="#offcanvasEditRoom<?= $row['room_id'] ?>">
-                                            <i class="fa fa-edit fa-xs"></i> Edit
-                                        </button>
-                                        <a href="?delete=<?= $row['room_id'] ?>" 
-                                           class="btn btn-danger btn-sm p-1" 
-                                           onclick="return confirm('Are you sure you want to delete this room and all its beds?')">
-                                            <i class="fa fa-trash fa-xs"></i> Delete
-                                        </a>
+                                   <td>
+                                        <div class="d-flex gap-1"> <!-- Flex container with small gap -->
+                                            <button class="btn btn-sm btn-warning px-2 py-1" 
+                                                    data-bs-toggle="offcanvas" 
+                                                    data-bs-target="#offcanvasEditRoom<?= $row['room_id'] ?>">
+                                                <i class="fas fa-edit fa-xs"></i> Edit
+                                            </button>
+                                            <a href="?delete=<?= $row['room_id'] ?>" 
+                                            class="btn btn-sm btn-danger px-2 py-1" 
+                                            onclick="return confirm('Delete this room and all its beds?')">
+                                                <i class="fas fa-trash fa-xs"></i> Delete
+                                            </a>
+                                        </div>
                                     </td>
                                 </tr>
                                 <?php endforeach; ?>
@@ -843,6 +886,10 @@ while ($floor = mysqli_fetch_assoc($all_floors)): ?>
         $bed_counts = mysqli_fetch_assoc($beds_query);
         $current_single = $bed_counts['single_count'];
         $current_double = $bed_counts['double_count'];
+        
+        // Get current rent values
+        $rent_query = mysqli_query($conn, "SELECT monthly_rent FROM beds WHERE room_id = {$row['room_id']} LIMIT 1");
+        $current_rent = mysqli_fetch_assoc($rent_query)['monthly_rent'] ?? 0;
     ?>
         <div class="offcanvas offcanvas-end" id="offcanvasEditRoom<?= $row['room_id'] ?>">
             <div class="offcanvas-header">
@@ -891,16 +938,23 @@ while ($floor = mysqli_fetch_assoc($all_floors)): ?>
                     <div class="mb-3 bed-configuration">
                         <h6>Bed Configuration</h6>
                         
+                        <div class="bed-config-warning">
+                            <i class="fas fa-exclamation-triangle me-2"></i>
+                            Changing bed configuration will delete and recreate all beds in this room.
+                        </div>
+                        
                         <div class="row">
                             <div class="col-md-6">
                                 <label class="form-label">Single Deck Beds</label>
                                 <input type="number" name="edit_single_deck_count" class="form-control" 
                                        value="<?= $current_single ?>" min="0" max="10">
+                                <div class="deck-info">Assigned as Lower deck</div>
                             </div>
                             <div class="col-md-6">
                                 <label class="form-label">Double Deck Beds</label>
                                 <input type="number" name="edit_double_deck_count" class="form-control" 
                                        value="<?= $current_double ?>" min="0" max="10">
+                                <div class="deck-info">Creates 2 beds (Upper + Lower)</div>
                             </div>
                         </div>
                         
@@ -909,7 +963,7 @@ while ($floor = mysqli_fetch_assoc($all_floors)): ?>
                             <div class="input-group rent-input">
                                 <span class="input-group-text">₱</span>
                                 <input type="number" name="edit_monthly_rent" class="form-control" 
-                                    value="<?= number_format($row['min_rent'], 2) ?>" min="0" step="100" required>
+                                    value="<?= number_format($current_rent, 2) ?>" min="0" step="100" required>
                             </div>
                         </div>
                     </div>

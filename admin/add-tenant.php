@@ -25,6 +25,16 @@ function generateUsername($firstName, $lastName) {
     return $baseUsername;
 }
 
+function getAcademicYearId($conn, $yearRange, $semester) {
+    [$start_year, $end_year] = explode('-', $yearRange);
+    $stmt = $conn->prepare("SELECT academic_year_id FROM academic_years WHERE start_year = ? AND end_year = ? AND semester = ?");
+    $stmt->bind_param("iis", $start_year, $end_year, $semester);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    return $result->fetch_assoc()['academic_year_id'] ?? null;
+}
+
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (isset($_POST['step1'])) {
         // Store personal info in session
@@ -43,7 +53,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             'student_id' => $isStudent ? ($_POST['student_id'] ?? null) : null,
             'course_id' => $isStudent ? ($_POST['course_id'] ?? null) : null,
             'year_level' => $isStudent ? ($_POST['year_level'] ?? '1') : '1',
-            'academic_year_id' => $isStudent ? ($_POST['academic_year_id'] ?? null) : null,
+            // Look up academic_year_id based on selected year and semester
+            'academic_year_id' => $isStudent && isset($_POST['academic_year'], $_POST['semester']) 
+            ? getAcademicYearId($conn, $_POST['academic_year'], $_POST['semester']) 
+            : null,
+
             'profile_picture' => null
         ];
         
@@ -144,14 +158,29 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $t_mobile_no = $_SESSION['tenant_data']['mobile_no'];
             $t_is_student = $_SESSION['tenant_data']['is_student'];
             $t_tenant_type = $_SESSION['tenant_data']['tenant_type'];
+
+             // 3. Create user account
+            $defaultUsername = generateUsername($t_first_name, $t_last_name);
+            $defaultPassword = 'password123';
+            $hashedPassword = password_hash($defaultPassword, PASSWORD_DEFAULT);
+            
+            $userStmt = $conn->prepare("INSERT INTO users 
+                                      (username, password, role) 
+                                      VALUES (?, ?, 'Tenant')");
+            $userStmt->bind_param('ss', $defaultUsername, $hashedPassword);
+            $userStmt->execute();
+            $userId = $conn->insert_id;
+            $userStmt->close();
+
+
             
             $tenantStmt = $conn->prepare("INSERT INTO tenants 
                                        (academic_year_id, first_name, last_name, middle_name, 
                                         birthdate, address, gender, mobile_no, guardian_id, 
-                                        course_id, year_level, is_student, student_id, tenant_type) 
-                                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+                                        course_id, year_level, is_student, student_id, tenant_type, user_id) 
+                                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
             
-            $tenantStmt->bind_param('isssssssiisiss', 
+            $tenantStmt->bind_param('isssssssiisissi', 
                 $academicYearId,
                 $t_first_name,
                 $t_last_name,
@@ -165,24 +194,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $yearLevel,
                 $t_is_student,
                 $studentId,
-                $t_tenant_type
+                $t_tenant_type,
+                $userId
             );
             $tenantStmt->execute();
             $tenantId = $conn->insert_id;
             $tenantStmt->close();
             
-            // 3. Create user account
-            $defaultUsername = generateUsername($t_first_name, $t_last_name);
-            $defaultPassword = 'password123';
-            $hashedPassword = password_hash($defaultPassword, PASSWORD_DEFAULT);
-            
-            $userStmt = $conn->prepare("INSERT INTO users 
-                                      (username, password, role) 
-                                      VALUES (?, ?, 'Tenant')");
-            $userStmt->bind_param('ss', $defaultUsername, $hashedPassword);
-            $userStmt->execute();
-            $userId = $conn->insert_id;
-            $userStmt->close();
+           
             
             // Update tenant with user_id
             $conn->query("UPDATE tenants SET user_id = $userId WHERE tenant_id = $tenantId");
@@ -192,7 +211,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $start_date = $_SESSION['bed_data']['start_date'];
             
             // First verify bed is still available
-            $checkBed = $conn->query("SELECT status FROM beds WHERE bed_id = $bed_id AND deleted_at IS NULL")->fetch_assoc();
+            $checkBed = $conn->query("SELECT status FROM beds WHERE bed_id = $bed_id")->fetch_assoc();
             if (!$checkBed || $checkBed['status'] !== 'Vacant') {
                 throw new Exception("The selected bed is no longer available");
             }
@@ -212,7 +231,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             
             // 5. Update bed status (with additional safety checks)
             $bedStmt = $conn->prepare("UPDATE beds 
-                                      SET status = 'Occupied',  
+                                      SET status = 'Occupied'
                                       WHERE bed_id = ? 
                                       AND status = 'Vacant'");
             $bedStmt->bind_param('i', $bed_id);

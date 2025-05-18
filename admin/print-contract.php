@@ -1,6 +1,6 @@
 <?php
 session_start();
-require_once 'connection/db.php';
+require_once '../connection/db.php';
 
 // Check for tenant_id in POST, GET, or SESSION
 $tenantId = null;

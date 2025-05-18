@@ -1,6 +1,6 @@
 <?php
 session_start();
-require_once 'connection/db.php';
+require_once '../connection/db.php';
 
 // Enable error reporting
 error_reporting(E_ALL);

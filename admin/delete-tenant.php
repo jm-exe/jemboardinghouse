@@ -1,6 +1,6 @@
 <?php
 session_start();
-require_once 'connection/db.php';
+require_once '../connection/db.php';
 
 if (!isset($_GET['id'])) {
     $_SESSION['error_message'] = "No tenant ID provided for deletion";

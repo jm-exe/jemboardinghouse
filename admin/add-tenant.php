@@ -1,5 +1,9 @@
 <?php
+error_reporting(E_ALL);
+ini_set('display_errors', 1);
 session_start();
+session_regenerate_id(true);
+
 require_once '../connection/db.php';
 
 // Fetch necessary dropdown data
@@ -8,7 +12,10 @@ $academicYears = $conn->query("SELECT * FROM academic_years ORDER BY start_year 
 $yearLevels = ['1', '2', '3', '4'];
 
 // Initialize current step
-$current_step = isset($_SESSION['current_step']) ? $_SESSION['current_step'] : 1;
+if (!isset($_SESSION['current_step'])) {
+    $_SESSION['current_step'] = 1;
+}
+$current_step = $_SESSION['current_step'];
 
 // Function to generate default username
 function generateUsername($firstName, $lastName) {
@@ -35,12 +42,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             'tenant_type' => $isStudent ? 'Student' : 'Non-Student',
             'student_id' => $isStudent ? ($_POST['student_id'] ?? null) : null,
             'course_id' => $isStudent ? ($_POST['course_id'] ?? null) : null,
-            'year_level' => $isStudent ? ($_POST['year_level'] ?? '1') : '1', // Default to '1' for all
+            'year_level' => $isStudent ? ($_POST['year_level'] ?? '1') : '1',
             'academic_year_id' => $isStudent ? ($_POST['academic_year_id'] ?? null) : null,
             'profile_picture' => null
         ];
+        
         if (isset($_FILES['profile_picture']) && $_FILES['profile_picture']['error'] === UPLOAD_ERR_OK) {
-            $uploadDir = 'uploads/profiles/';
+            $uploadDir = '../uploads/profiles/';
             $allowedTypes = ['image/jpeg', 'image/png', 'image/gif'];
             $maxSize = 2 * 1024 * 1024; // 2MB
             
@@ -59,6 +67,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
         $_SESSION['current_step'] = 2;
+        header("Location: ".$_SERVER['PHP_SELF']);
+        exit();
     } elseif (isset($_POST['step2'])) {
         // Store guardian info in session
         $_SESSION['guardian_data'] = [
@@ -69,6 +79,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             'relationship' => $_POST['guardian_relationship']
         ];
         $_SESSION['current_step'] = 3;
+        header("Location: ".$_SERVER['PHP_SELF']);
+        exit();
     } elseif (isset($_POST['step3'])) {
         // Store bed assignment in session
         $_SESSION['bed_data'] = [
@@ -76,13 +88,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             'start_date' => $_POST['start_date']
         ];
         $_SESSION['current_step'] = 4;
+        header("Location: ".$_SERVER['PHP_SELF']);
+        exit();
     } elseif (isset($_POST['step4'])) {
         // Store terms acceptance
         $_SESSION['terms_accepted'] = isset($_POST['accept_terms']);
         $_SESSION['current_step'] = 5;
+        header("Location: ".$_SERVER['PHP_SELF']);
+        exit();
     } elseif (isset($_POST['prev_step'])) {
         // Go back to previous step
         $_SESSION['current_step'] = max($current_step - 1, 1);
+        header("Location: ".$_SERVER['PHP_SELF']);
+        exit();
     } elseif (isset($_POST['complete'])) {
         // Process all data and save to database
         $conn->begin_transaction();
@@ -110,12 +128,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $guardianId = $conn->insert_id;
             $guardianStmt->close();
 
-            // 2. Save tenant - prepare all values
+            // 2. Save tenant
             $isStudent = $_SESSION['tenant_data']['is_student'] == 1;
             $academicYearId = $isStudent ? $_SESSION['tenant_data']['academic_year_id'] : null;
             $courseId = $isStudent ? $_SESSION['tenant_data']['course_id'] : null;
             $studentId = $isStudent ? $_SESSION['tenant_data']['student_id'] : null;
-            $yearLevel = $_SESSION['tenant_data']['year_level']; // Always has value
+            $yearLevel = $_SESSION['tenant_data']['year_level'];
             
             $t_first_name = $_SESSION['tenant_data']['first_name'];
             $t_last_name = $_SESSION['tenant_data']['last_name'];
@@ -173,6 +191,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $bed_id = $_SESSION['bed_data']['bed_id'];
             $start_date = $_SESSION['bed_data']['start_date'];
             
+            // First verify bed is still available
+            $checkBed = $conn->query("SELECT status FROM beds WHERE bed_id = $bed_id AND deleted_at IS NULL")->fetch_assoc();
+            if (!$checkBed || $checkBed['status'] !== 'Vacant') {
+                throw new Exception("The selected bed is no longer available");
+            }
+            
+            // Create boarding record
             $boardingStmt = $conn->prepare("INSERT INTO boarding 
                                           (tenant_id, bed_id, start_date) 
                                           VALUES (?, ?, ?)");
@@ -185,10 +210,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $boardingId = $conn->insert_id;
             $boardingStmt->close();
             
-            // 5. Update bed status
-            $bedStmt = $conn->prepare("UPDATE beds SET status = 'Occupied' WHERE bed_id = ?");
+            // 5. Update bed status (with additional safety checks)
+            $bedStmt = $conn->prepare("UPDATE beds 
+                                      SET status = 'Occupied',  
+                                      WHERE bed_id = ? 
+                                      AND status = 'Vacant'");
             $bedStmt->bind_param('i', $bed_id);
             $bedStmt->execute();
+            
+            if ($conn->affected_rows === 0) {
+                throw new Exception("Failed to update bed status - it may have been already occupied");
+            }
             $bedStmt->close();
             
             // 6. Process payment
@@ -228,7 +260,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             // Clear temporary files
             if (!empty($_SESSION['tenant_data']['profile_picture']) && 
                 strpos($_SESSION['tenant_data']['profile_picture'], 'temp_') === 0) {
-                $tempFile = 'uploads/profiles/' . $_SESSION['tenant_data']['profile_picture'];
+                $tempFile = '../uploads/profiles/' . $_SESSION['tenant_data']['profile_picture'];
                 if (file_exists($tempFile)) {
                     unlink($tempFile);
                 }
@@ -247,7 +279,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } catch (Exception $e) {
             if (!empty($_SESSION['tenant_data']['profile_picture']) && 
                 strpos($_SESSION['tenant_data']['profile_picture'], 'temp_') === 0) {
-                $tempFile = 'uploads/profiles/' . $_SESSION['tenant_data']['profile_picture'];
+                $tempFile = '../uploads/profiles/' . $_SESSION['tenant_data']['profile_picture'];
                 if (file_exists($tempFile)) {
                     unlink($tempFile);
                 }
@@ -258,31 +290,43 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
-// Fetch available beds for step 3
+// Fetch all floors, rooms, and beds (including occupied ones)
 if ($current_step >= 3) {
-    $beds = $conn->query("
-        SELECT b.*, r.room_no, f.floor_no 
-        FROM beds b
-        JOIN rooms r ON b.room_id = r.room_id
-        JOIN floors f ON r.floor_id = f.floor_id
-        WHERE b.status = 'Vacant'
-        ORDER BY f.floor_no, r.room_no, b.bed_no
-    ")->fetch_all(MYSQLI_ASSOC);
-    
+    // Get all floors
+    $floors = $conn->query("SELECT * FROM floors ORDER BY floor_no")->fetch_all(MYSQLI_ASSOC);
     $bedOptions = [];
-    foreach ($beds as $bed) {
-        $floorNo = $bed['floor_no'];
-        $roomNo = $bed['room_no'];
+
+    foreach ($floors as $floor) {
+        $floorNo = $floor['floor_no'];
+        $bedOptions[$floorNo] = [];
         
-        if (!isset($bedOptions[$floorNo])) {
-            $bedOptions[$floorNo] = [];
-        }
+        // Get all rooms for this floor
+        $rooms = $conn->query("
+            SELECT r.* 
+            FROM rooms r
+            WHERE r.floor_id = {$floor['floor_id']}
+            ORDER BY r.room_no
+        ")->fetch_all(MYSQLI_ASSOC);
         
-        if (!isset($bedOptions[$floorNo][$roomNo])) {
+        foreach ($rooms as $room) {
+            $roomNo = $room['room_no'];
             $bedOptions[$floorNo][$roomNo] = [];
+            
+            // Get ALL beds for this room (including occupied ones)
+            $beds = $conn->query("
+                SELECT b.* 
+                FROM beds b
+                WHERE b.room_id = {$room['room_id']}
+                ORDER BY b.bed_no
+            ")->fetch_all(MYSQLI_ASSOC);
+            
+            foreach ($beds as $bed) {
+                // Add floor and room info to each bed
+                $bed['floor_no'] = $floorNo;
+                $bed['room_no'] = $roomNo;
+                $bedOptions[$floorNo][$roomNo][] = $bed;
+            }
         }
-        
-        $bedOptions[$floorNo][$roomNo][] = $bed;
     }
 }
 
@@ -298,9 +342,7 @@ $showSuccessModal = isset($_GET['success']) && $_GET['success'] == 1;
     <title>Add New Tenant</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css">
-
     <link rel="stylesheet" href="CSS/sidebar.css">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
     <style>
         :root {
             --primary-color: #4361ee;
@@ -308,6 +350,7 @@ $showSuccessModal = isset($_GET['success']) && $_GET['success'] == 1;
             --light-color: #f8f9fa;
             --dark-color: #212529;
             --success-color: #4cc9f0;
+            --danger-color: #ef233c;
             --border-radius: 0.375rem;
         }
         
@@ -318,11 +361,6 @@ $showSuccessModal = isset($_GET['success']) && $_GET['success'] == 1;
         }
         
         
-        .main-content {
-            padding: 2rem;
-            max-width: 1200px;
-            margin: 0 auto;
-        }
         
         .card {
             border: none;
@@ -441,16 +479,24 @@ $showSuccessModal = isset($_GET['success']) && $_GET['success'] == 1;
         }
         
         .bed-card {
-            cursor: pointer;
-            margin-bottom: 1rem;
             transition: all 0.2s;
-            border: 1px solid #e0e0e0;
             border-radius: var(--border-radius);
+            margin-bottom: 1rem;
         }
         
-        .bed-card:hover {
+        .bed-card.vacant {
+            border: 1px solid var(--success-color);
+            cursor: pointer;
+        }
+        
+        .bed-card.vacant:hover {
             transform: translateY(-2px);
             box-shadow: 0 4px 8px rgba(0,0,0,0.05);
+        }
+        
+        .bed-card.occupied {
+            border: 1px solid var(--danger-color);
+            opacity: 0.7;
         }
         
         .bed-card.selected {
@@ -477,6 +523,7 @@ $showSuccessModal = isset($_GET['success']) && $_GET['success'] == 1;
             transition: all 0.3s ease;
             overflow: hidden;
         }
+        
         .photo-upload-container {
             position: relative;
             width: 120px;
@@ -531,7 +578,6 @@ $showSuccessModal = isset($_GET['success']) && $_GET['success'] == 1;
         #profile_picture {
             display: none;
         }
-
     </style>
 </head>
 <body>
@@ -550,7 +596,7 @@ $showSuccessModal = isset($_GET['success']) && $_GET['success'] == 1;
         <div class="alert alert-danger"><?= $error ?></div>
         <?php endif; ?>
         
-        <!-- Minimal Step Progress -->
+        <!-- Step Progress -->
         <div class="step-progress">
             <div class="step <?= $current_step >= 1 ? 'completed' : '' ?> <?= $current_step == 1 ? 'active' : '' ?>">
                 <div class="step-number">1</div>
@@ -575,18 +621,18 @@ $showSuccessModal = isset($_GET['success']) && $_GET['success'] == 1;
         </div>
 
         <div class="card">
-            <form method="POST" id="tenantForm" class="needs-validation" novalidate>
+            <form method="POST" id="tenantForm" class="needs-validation" novalidate enctype="multipart/form-data">
                 <input type="hidden" name="current_step" value="<?= $current_step ?>">
 
-                    <!-- Step 1: Personal Information -->
-                    <?php if ($current_step == 1): ?>
-                    <div class="card-header">Personal Information</div>
-                    <div class="card-body">
-                        <!-- Photo Upload Section -->
+                <!-- Step 1: Personal Information -->
+                <?php if ($current_step == 1): ?>
+                <div class="card-header">Personal Information</div>
+                <div class="card-body">
+                    <!-- Photo Upload Section -->
                     <div class="photo-upload-container">
                         <div class="photo-preview" id="photoPreview">
                             <?php if (!empty($_SESSION['tenant_data']['profile_picture'])): ?>
-                                <img src="uploads/profiles/<?= htmlspecialchars($_SESSION['tenant_data']['profile_picture']) ?>" 
+                                <img src="../uploads/profiles/<?= htmlspecialchars($_SESSION['tenant_data']['profile_picture']) ?>" 
                                      alt="Profile Preview">
                             <?php else: ?>
                                 <i class="bi bi-person"></i>
@@ -598,178 +644,149 @@ $showSuccessModal = isset($_GET['success']) && $_GET['success'] == 1;
                         <input type="file" id="profile_picture" name="profile_picture" accept="image/*">
                     </div>
 
+                    <div class="row g-3">
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label class="form-label">First Name *</label>
+                                <input type="text" name="first_name" class="form-control" required
+                                    value="<?= htmlspecialchars($_SESSION['tenant_data']['first_name'] ?? '') ?>">
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">Middle Name</label>
+                                <input type="text" name="middle_name" class="form-control"
+                                    value="<?= htmlspecialchars($_SESSION['tenant_data']['middle_name'] ?? '') ?>">
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">Last Name *</label>
+                                <input type="text" name="last_name" class="form-control" required
+                                    value="<?= htmlspecialchars($_SESSION['tenant_data']['last_name'] ?? '') ?>">
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label class="form-label">Birthdate *</label>
+                                <input type="date" name="birthdate" class="form-control" required
+                                    value="<?= htmlspecialchars($_SESSION['tenant_data']['birthdate'] ?? '') ?>">
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">Gender *</label>
+                                <select name="gender" class="form-select" required>
+                                    <option value="M" <?= ($_SESSION['tenant_data']['gender'] ?? '') == 'M' ? 'selected' : '' ?>>Male</option>
+                                    <option value="F" <?= ($_SESSION['tenant_data']['gender'] ?? '') == 'F' ? 'selected' : '' ?>>Female</option>
+                                </select>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">Mobile Number *</label>
+                                <input type="text" name="mobile_no" class="form-control" required
+                                    value="<?= htmlspecialchars($_SESSION['tenant_data']['mobile_no'] ?? '') ?>">
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label class="form-label">Address *</label>
+                        <textarea name="address" class="form-control" rows="2" required><?= htmlspecialchars($_SESSION['tenant_data']['address'] ?? '') ?></textarea>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label class="form-label">Status *</label>
+                        <select name="is_student" id="isStudentSelect" class="form-select" required>
+                            <option value="1" <?= ($_SESSION['tenant_data']['is_student'] ?? 1) == 1 ? 'selected' : '' ?>>Student</option>
+                            <option value="0" <?= ($_SESSION['tenant_data']['is_student'] ?? 0) == 0 ? 'selected' : '' ?>>Non-Student</option>
+                        </select>
+                    </div>
+                    
+                    <div class="student-fields" id="studentFields">
+                        <div class="row g-3">
+                            <div class="col-md-4">
+                                <div class="mb-3">
+                                    <label class="form-label">Student ID *</label>
+                                    <input type="text" name="student_id" class="form-control" id="studentIdField"
+                                        value="<?= htmlspecialchars($_SESSION['tenant_data']['student_id'] ?? '') ?>">
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="mb-3">
+                                    <label class="form-label">Course *</label>
+                                    <select name="course_id" class="form-select" id="courseSelect" required>
+                                        <option value="">Select Course</option>
+                                        <?php foreach ($courses as $course): ?>
+                                        <option value="<?= $course['course_id'] ?>" 
+                                            <?= ($_SESSION['tenant_data']['course_id'] ?? '') == $course['course_id'] ? 'selected' : '' ?>>
+                                            <?= htmlspecialchars($course['course_description']) ?>
+                                        </option>
+                                        <?php endforeach; ?>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="mb-3">
+                                    <label class="form-label">Year Level *</label>
+                                    <select name="year_level" class="form-select" id="yearLevelSelect" required>
+                                        <option value="1" <?= ($_SESSION['tenant_data']['year_level'] ?? '1') == '1' ? 'selected' : '' ?>>1st Year</option>
+                                        <option value="2" <?= ($_SESSION['tenant_data']['year_level'] ?? '') == '2' ? 'selected' : '' ?>>2nd Year</option>
+                                        <option value="3" <?= ($_SESSION['tenant_data']['year_level'] ?? '') == '3' ? 'selected' : '' ?>>3rd Year</option>
+                                        <option value="4" <?= ($_SESSION['tenant_data']['year_level'] ?? '') == '4' ? 'selected' : '' ?>>4th Year</option>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
                         <div class="row g-3">
                             <div class="col-md-6">
                                 <div class="mb-3">
-                                    <label class="form-label">First Name *</label>
-                                    <input type="text" name="first_name" class="form-control" required
-                                        value="<?= htmlspecialchars($_SESSION['tenant_data']['first_name'] ?? '') ?>">
-                                </div>
-                                <div class="mb-3">
-                                    <label class="form-label">Middle Name</label>
-                                    <input type="text" name="middle_name" class="form-control"
-                                        value="<?= htmlspecialchars($_SESSION['tenant_data']['middle_name'] ?? '') ?>">
-                                </div>
-                                <div class="mb-3">
-                                    <label class="form-label">Last Name *</label>
-                                    <input type="text" name="last_name" class="form-control" required
-                                        value="<?= htmlspecialchars($_SESSION['tenant_data']['last_name'] ?? '') ?>">
+                                    <label class="form-label">Academic Year *</label>
+                                    <select name="academic_year" class="form-select" id="academicYearSelect" required>
+                                        <option value="">Select Academic Year</option>
+                                        <?php 
+                                        // Get unique academic years
+                                        $uniqueYears = [];
+                                        foreach ($academicYears as $year) {
+                                            $yearRange = $year['start_year'] . '-' . $year['end_year'];
+                                            if (!in_array($yearRange, $uniqueYears)) {
+                                                $uniqueYears[] = $yearRange;
+                                                echo '<option value="' . $yearRange . '"';
+                                                if (isset($_SESSION['tenant_data']['academic_year'])) {
+                                                    echo ($_SESSION['tenant_data']['academic_year'] == $yearRange) ? ' selected' : '';
+                                                }
+                                                echo '>' . $yearRange . '</option>';
+                                            }
+                                        }
+                                        ?>
+                                    </select>
                                 </div>
                             </div>
                             <div class="col-md-6">
                                 <div class="mb-3">
-                                    <label class="form-label">Birthdate *</label>
-                                    <input type="date" name="birthdate" class="form-control" required
-                                        value="<?= htmlspecialchars($_SESSION['tenant_data']['birthdate'] ?? '') ?>">
-                                </div>
-                                <div class="mb-3">
-                                    <label class="form-label">Gender *</label>
-                                    <select name="gender" class="form-select" required>
-                                        <option value="M" <?= ($_SESSION['tenant_data']['gender'] ?? '') == 'M' ? 'selected' : '' ?>>Male</option>
-                                        <option value="F" <?= ($_SESSION['tenant_data']['gender'] ?? '') == 'F' ? 'selected' : '' ?>>Female</option>
+                                    <label class="form-label">Semester *</label>
+                                    <select name="semester" class="form-select" id="semesterSelect" required>
+                                        <option value="">Select Semester</option>
+                                        <?php 
+                                        // Get unique semesters
+                                        $uniqueSemesters = [];
+                                        foreach ($academicYears as $year) {
+                                            if (!in_array($year['semester'], $uniqueSemesters)) {
+                                                $uniqueSemesters[] = $year['semester'];
+                                                echo '<option value="' . htmlspecialchars($year['semester']) . '"';
+                                                if (isset($_SESSION['tenant_data']['semester'])) {
+                                                    echo ($_SESSION['tenant_data']['semester'] == $year['semester']) ? ' selected' : '';
+                                                }
+                                                echo '>' . htmlspecialchars($year['semester']) . '</option>';
+                                            }
+                                        }
+                                        ?>
                                     </select>
                                 </div>
-                                <div class="mb-3">
-                                    <label class="form-label">Mobile Number *</label>
-                                    <input type="text" name="mobile_no" class="form-control" required
-                                        value="<?= htmlspecialchars($_SESSION['tenant_data']['mobile_no'] ?? '') ?>">
-                                </div>
                             </div>
-                        </div>
-                        
-                        <div class="mb-3">
-                            <label class="form-label">Address *</label>
-                            <textarea name="address" class="form-control" rows="2" required><?= htmlspecialchars($_SESSION['tenant_data']['address'] ?? '') ?></textarea>
-                        </div>
-                        
-                        <div class="mb-3">
-                            <label class="form-label">Status *</label>
-                            <select name="is_student" id="isStudentSelect" class="form-select" required>
-                                <option value="1" <?= ($_SESSION['tenant_data']['is_student'] ?? 1) == 1 ? 'selected' : '' ?>>Student</option>
-                                <option value="0" <?= ($_SESSION['tenant_data']['is_student'] ?? 0) == 0 ? 'selected' : '' ?>>Non-Student</option>
-                            </select>
-                        </div>
-                        
-                        <div class="student-fields" id="studentFields">
-                            <div class="row g-3">
-                                <div class="col-md-4">
-                                    <div class="mb-3">
-                                        <label class="form-label">Student ID *</label>
-                                        <input type="text" name="student_id" class="form-control" id="studentIdField"
-                                            value="<?= htmlspecialchars($_SESSION['tenant_data']['student_id'] ?? '') ?>">
-                                    </div>
-                                </div>
-                                <div class="col-md-4">
-                                    <div class="mb-3">
-                                        <label class="form-label">Course *</label>
-                                        <select name="course_id" class="form-select" id="courseSelect" required>
-                                            <option value="">Select Course</option>
-                                            <?php foreach ($courses as $course): ?>
-                                            <option value="<?= $course['course_id'] ?>" 
-                                                <?= ($_SESSION['tenant_data']['course_id'] ?? '') == $course['course_id'] ? 'selected' : '' ?>>
-                                                <?= htmlspecialchars($course['course_description']) ?>
-                                            </option>
-                                            <?php endforeach; ?>
-                                        </select>
-                                    </div>
-                                </div>
-                                <div class="col-md-4">
-                                    <div class="mb-3">
-                                        <label class="form-label">Year Level *</label>
-                                        <select name="year_level" class="form-select" id="yearLevelSelect" required>
-                                            <option value="1" <?= ($_SESSION['tenant_data']['year_level'] ?? '1') == '1' ? 'selected' : '' ?>>1st Year</option>
-                                            <option value="2" <?= ($_SESSION['tenant_data']['year_level'] ?? '') == '2' ? 'selected' : '' ?>>2nd Year</option>
-                                            <option value="3" <?= ($_SESSION['tenant_data']['year_level'] ?? '') == '3' ? 'selected' : '' ?>>3rd Year</option>
-                                            <option value="4" <?= ($_SESSION['tenant_data']['year_level'] ?? '') == '4' ? 'selected' : '' ?>>4th Year</option>
-                                        </select>
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="row g-3">
-                                <div class="col-md-6">
-                                    <div class="mb-3">
-                                        <label class="form-label">Academic Year *</label>
-                                        <select name="academic_year" class="form-select" id="academicYearSelect" required>
-                                            <option value="">Select Academic Year</option>
-                                            <?php 
-                                            // Get unique academic years
-                                            $uniqueYears = [];
-                                            foreach ($academicYears as $year) {
-                                                $yearRange = $year['start_year'] . '-' . $year['end_year'];
-                                                if (!in_array($yearRange, $uniqueYears)) {
-                                                    $uniqueYears[] = $yearRange;
-                                                    echo '<option value="' . $yearRange . '"';
-                                                    if (isset($_SESSION['tenant_data']['academic_year'])) {
-                                                        echo ($_SESSION['tenant_data']['academic_year'] == $yearRange) ? ' selected' : '';
-                                                    }
-                                                    echo '>' . $yearRange . '</option>';
-                                                }
-                                            }
-                                            ?>
-                                        </select>
-                                    </div>
-                                </div>
-                                <div class="col-md-6">
-                                    <div class="mb-3">
-                                        <label class="form-label">Semester *</label>
-                                        <select name="semester" class="form-select" id="semesterSelect" required>
-                                            <option value="">Select Semester</option>
-                                            <?php 
-                                            // Get unique semesters
-                                            $uniqueSemesters = [];
-                                            foreach ($academicYears as $year) {
-                                                if (!in_array($year['semester'], $uniqueSemesters)) {
-                                                    $uniqueSemesters[] = $year['semester'];
-                                                    echo '<option value="' . htmlspecialchars($year['semester']) . '"';
-                                                    if (isset($_SESSION['tenant_data']['semester'])) {
-                                                        echo ($_SESSION['tenant_data']['semester'] == $year['semester']) ? ' selected' : '';
-                                                    }
-                                                    echo '>' . htmlspecialchars($year['semester']) . '</option>';
-                                                }
-                                            }
-                                            ?>
-                                        </select>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                        
-                        <div class="navigation-buttons">
-                            <button type="submit" name="step1" class="btn btn-primary">
-                                Next <i class="bi bi-arrow-right"></i>
-                            </button>
                         </div>
                     </div>
-
-                    <script>
-                    document.addEventListener('DOMContentLoaded', function() {
-                        const isStudentSelect = document.getElementById('isStudentSelect');
-                        const studentFields = document.getElementById('studentFields');
-                        
-                        function toggleStudentFields() {
-                            if (isStudentSelect.value === '1') {
-                                studentFields.style.display = 'block';
-                                // Make all student fields required
-                                document.querySelectorAll('#studentFields select, #studentFields input').forEach(function(field) {
-                                    field.required = true;
-                                });
-                            } else {
-                                studentFields.style.display = 'none';
-                                // Remove required from student fields
-                                document.querySelectorAll('#studentFields select, #studentFields input').forEach(function(field) {
-                                    field.required = false;
-                                });
-                            }
-                        }
-                        
-                        // Initialize on page load
-                        toggleStudentFields();
-                        
-                        // Add event listener for changes
-                        isStudentSelect.addEventListener('change', toggleStudentFields);
-                    });
-                    </script>
-                    <?php endif; ?>
+                    
+                    <div class="navigation-buttons">
+                        <button type="submit" name="step1" class="btn btn-primary">
+                            Next <i class="bi bi-arrow-right"></i>
+                        </button>
+                    </div>
+                </div>
+                <?php endif; ?>
                 
                 <!-- Step 2: Guardian Information -->
                 <?php if ($current_step == 2): ?>
@@ -831,12 +848,12 @@ $showSuccessModal = isset($_GET['success']) && $_GET['success'] == 1;
                 <?php if ($current_step == 3): ?>
                 <div class="card-header">Bed Assignment</div>
                 <div class="card-body">
-                    <?php if (empty($beds)): ?>
+                    <?php if (empty($floors)): ?>
                     <div class="alert alert-danger">
-                        <h5><i class="bi bi-exclamation-triangle"></i> No Available Beds</h5>
-                        <p>There are currently no vacant beds in the system.</p>
-                        <a href="manage-beds.php" class="btn btn-warning">
-                            <i class="bi bi-plus-circle"></i> Manage Beds
+                        <h5><i class="bi bi-exclamation-triangle"></i> No Floors Available</h5>
+                        <p>There are currently no floors in the system.</p>
+                        <a href="manage-floors.php" class="btn btn-warning">
+                            <i class="bi bi-plus-circle"></i> Manage Floors
                         </a>
                     </div>
                     <?php else: ?>
@@ -1033,250 +1050,220 @@ $showSuccessModal = isset($_GET['success']) && $_GET['success'] == 1;
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 <script>
-
-    document.addEventListener('DOMContentLoaded', function() {
-        const form = document.getElementById('tenantForm');
-        const navigationButtons = form.querySelectorAll('[name="prev_step"], [name^="step"], [name="complete"]');
-        
-        // Handle student/non-student toggle
-        const isStudentSelect = document.getElementById('isStudentSelect');
-        const studentFields = document.querySelectorAll('.student-fields');
-        
-        function toggleStudentFields() {
-            if (isStudentSelect && isStudentSelect.value === '1') {
-                studentFields.forEach(field => {
-                    field.style.display = 'block';
-                    field.querySelector('select, input').required = true;
-                });
-            } else if (isStudentSelect) {
-                studentFields.forEach(field => {
-                    field.style.display = 'none';
-                    field.querySelector('select, input').required = false;
-                });
+document.addEventListener('DOMContentLoaded', function() {
+    // Photo preview functionality
+    const profilePictureInput = document.getElementById('profile_picture');
+    if (profilePictureInput) {
+        profilePictureInput.addEventListener('change', function(e) {
+            const preview = document.getElementById('photoPreview');
+            const file = e.target.files[0];
+            
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    preview.innerHTML = `<img src="${e.target.result}" alt="Profile Preview">`;
+                }
+                reader.readAsDataURL(file);
             }
-        }
-        
-        
-        // Initialize on page load
-        toggleStudentFields();
-        
-        // Add event listener for changes
-        if (isStudentSelect) {
-            isStudentSelect.addEventListener('change', toggleStudentFields);
-        }
-        
-            // Bed selection functionality
-            <?php if ($current_step == 3 && !empty($beds)): ?>
-            const bedOptions = <?= json_encode($bedOptions) ?>;
-            let selectedFloor = null;
-            let selectedRoom = null;
-            let selectedBed = null;
+        });
+    }
 
-            // Floor selection
-            document.querySelectorAll('.floor-btn').forEach(btn => {
-                btn.addEventListener('click', function() {
-                    selectedFloor = this.dataset.floor;
-                    selectedRoom = null;
-                    selectedBed = null;
-                    
-                    // Update UI
-                    document.querySelectorAll('.floor-btn').forEach(b => b.classList.remove('active'));
-                    this.classList.add('active');
-                    
-                    // Show rooms for this floor
-                    const roomButtonsContainer = document.getElementById('roomButtons');
-                    roomButtonsContainer.innerHTML = '';
-                    
-                    Object.keys(bedOptions[selectedFloor]).forEach(roomNo => {
-                        const roomBtn = document.createElement('button');
-                        roomBtn.type = 'button';
-                        roomBtn.className = 'btn btn-outline-secondary room-btn';
-                        roomBtn.dataset.room = roomNo;
-                        roomBtn.textContent = `Room ${roomNo}`;
-                        roomBtn.addEventListener('click', function() {
-                            selectRoom(roomNo);
-                        });
-                        roomButtonsContainer.appendChild(roomBtn);
-                    });
-                    
-                    // Show room selection section
-                    document.getElementById('roomSelection').style.display = 'block';
-                    document.getElementById('bedSelection').style.display = 'none';
-                    document.getElementById('selectedBedInfo').style.display = 'none';
-                });
+    // Handle student/non-student toggle
+    const isStudentSelect = document.getElementById('isStudentSelect');
+    const studentFields = document.getElementById('studentFields');
+    
+    if (isStudentSelect && studentFields) {
+        function toggleStudentFields() {
+            const isStudent = isStudentSelect.value === '1';
+            studentFields.style.display = isStudent ? 'block' : 'none';
+            
+            // Toggle required attribute for student fields
+            document.querySelectorAll('#studentFields select, #studentFields input').forEach(function(field) {
+                field.required = isStudent;
             });
+        }
+        
+        // Initialize and add event listener
+        toggleStudentFields();
+        isStudentSelect.addEventListener('change', toggleStudentFields);
+    }
 
-            // Room selection
-            function selectRoom(roomNo) {
-                selectedRoom = roomNo;
-                selectedBed = null;
+    <?php if ($current_step == 3 && !empty($floors)): ?>
+    // Bed selection functionality
+    const bedOptions = <?= json_encode($bedOptions) ?>;
+    let selectedFloor = null;
+    let selectedRoom = null;
+    let selectedBed = null;
+
+    // Floor selection
+    document.querySelectorAll('.floor-btn').forEach(btn => {
+        btn.addEventListener('click', function() {
+            selectedFloor = this.dataset.floor;
+            selectedRoom = null;
+            selectedBed = null;
+            
+            // Update UI
+            document.querySelectorAll('.floor-btn').forEach(b => b.classList.remove('active'));
+            this.classList.add('active');
+            
+            // Show rooms for this floor
+            const roomButtonsContainer = document.getElementById('roomButtons');
+            roomButtonsContainer.innerHTML = '';
+            
+            const rooms = bedOptions[selectedFloor];
+            
+            for (const roomNo in rooms) {
+                const roomBtn = document.createElement('button');
+                roomBtn.type = 'button';
+                roomBtn.className = 'btn btn-outline-secondary room-btn';
+                roomBtn.dataset.room = roomNo;
+                roomBtn.textContent = `Room ${roomNo}`;
+                roomBtn.addEventListener('click', () => selectRoom(roomNo));
+                roomButtonsContainer.appendChild(roomBtn);
+            }
+            
+            // Show room selection section
+            document.getElementById('roomSelection').style.display = 'block';
+            document.getElementById('bedSelection').style.display = 'none';
+            document.getElementById('selectedBedInfo').style.display = 'none';
+        });
+    });
+
+    // Room selection
+    function selectRoom(roomNo) {
+        selectedRoom = roomNo;
+        selectedBed = null;
+        
+        // Update UI - highlight selected room button
+        document.querySelectorAll('.room-btn').forEach(b => b.classList.remove('active'));
+        document.querySelector(`.room-btn[data-room="${roomNo}"]`).classList.add('active');
+        
+        // Show beds for this room
+        const bedCardsContainer = document.getElementById('bedCards');
+        bedCardsContainer.innerHTML = '';
+        
+        const beds = bedOptions[selectedFloor][selectedRoom];
+        
+        if (beds?.length > 0) {
+            beds.forEach(bed => {
+                const isVacant = bed.status === 'Vacant';
+                const statusClass = isVacant ? 'vacant' : 'occupied';
+                const statusBadge = isVacant ? 'bg-success' : 'bg-danger';
                 
-                // Update UI - highlight selected room button
-                document.querySelectorAll('.room-btn').forEach(b => b.classList.remove('active'));
-                document.querySelector(`.room-btn[data-room="${roomNo}"]`).classList.add('active');
+                const bedCard = document.createElement('div');
+                bedCard.className = 'col-md-4 mb-3';
+                bedCard.innerHTML = `
+                    <div class="card bed-card ${statusClass}" 
+                        data-bed-id="${bed.bed_id}"
+                        data-status="${bed.status}">
+                        <div class="card-body">
+                            <h5 class="card-title">Bed ${bed.bed_no}</h5>
+                            <p class="card-text">
+                                Floor ${bed.floor_no}, Room ${bed.room_no}<br>
+                                Deck: ${bed.deck}<br>
+                                Status: <span class="badge ${statusBadge}">${bed.status}</span><br>
+                                Rent: ₱${parseFloat(bed.monthly_rent).toFixed(2)}
+                            </p>
+                        </div>
+                    </div>
+                `;
                 
-                // Show beds for this room
-                const bedCardsContainer = document.getElementById('bedCards');
-                bedCardsContainer.innerHTML = '';
-                
-                // Check if beds exist for this room
-                if (bedOptions[selectedFloor][selectedRoom] && bedOptions[selectedFloor][selectedRoom].length > 0) {
-                    bedOptions[selectedFloor][selectedRoom].forEach(bed => {
-                        const bedCard = document.createElement('div');
-                        bedCard.className = 'col-md-4 mb-3';
-                        bedCard.innerHTML = `
-                            <div class="card bed-card ${selectedBed == bed.bed_id ? 'selected' : ''}" 
-                                data-bed-id="${bed.bed_id}" 
-                                style="cursor: pointer;">
-                                <div class="card-body">
-                                    <h5 class="card-title">Bed ${bed.bed_no}</h5>
-                                    <p class="card-text">
-                                        Floor ${bed.floor_no}, Room ${bed.room_no}<br>
-                                        Deck: ${bed.deck}<br>
-                                        Rent: ₱${parseFloat(bed.monthly_rent).toFixed(2)}
-                                    </p>
-                                </div>
-                            </div>
-                        `;
-                        bedCard.querySelector('.bed-card').addEventListener('click', function() {
-                            selectBed(bed.bed_id);
-                        });
-                        bedCardsContainer.appendChild(bedCard);
-                    });
-                } else {
-                    bedCardsContainer.innerHTML = '<div class="col-12"><div class="alert alert-warning">No available beds in this room</div></div>';
+                // Only make vacant beds clickable
+                if (isVacant) {
+                    bedCard.querySelector('.bed-card').addEventListener('click', () => selectBed(bed.bed_id));
                 }
                 
-                document.getElementById('bedSelection').style.display = 'block';
-                document.getElementById('selectedBedInfo').style.display = 'none';
-            }
+                bedCardsContainer.appendChild(bedCard);
+            });
+        } else {
+            bedCardsContainer.innerHTML = '<div class="col-12"><div class="alert alert-warning">No beds in this room</div></div>';
+        }
+        
+        document.getElementById('bedSelection').style.display = 'block';
+        document.getElementById('selectedBedInfo').style.display = 'none';
+    }
 
-            // Bed selection
-            function selectBed(bedId) {
-                selectedBed = bedId;
-                
-                // Find the bed data
-                const bedData = bedOptions[selectedFloor][selectedRoom].find(b => b.bed_id == bedId);
-                
-                // Update UI - highlight selected bed
-                document.querySelectorAll('.bed-card').forEach(c => c.classList.remove('selected'));
-                document.querySelector(`.bed-card[data-bed-id="${bedId}"]`).classList.add('selected');
-                
-                // Update hidden input and display
-                document.getElementById('bedIdInput').value = bedId;
-                document.getElementById('selectedBedText').textContent = 
-                    `Bed ${bedData.bed_no} (Floor ${bedData.floor_no}, Room ${bedData.room_no}) - ₱${parseFloat(bedData.monthly_rent).toFixed(2)}`;
-                document.getElementById('selectedBedInfo').style.display = 'block';
-            }
+    // Bed selection
+    function selectBed(bedId) {
+        selectedBed = bedId;
+        
+        // Find the bed data
+        const beds = bedOptions[selectedFloor][selectedRoom];
+        const bedData = beds.find(b => b.bed_id == bedId);
+        
+        if (!bedData) return;
+        
+        // Update UI - highlight selected bed
+        document.querySelectorAll('.bed-card').forEach(card => {
+            card.classList.remove('selected');
+            card.style.border = '';
+        });
+        
+        const selectedCard = document.querySelector(`.bed-card[data-bed-id="${bedId}"]`);
+        selectedCard.classList.add('selected');
+        selectedCard.style.border = '2px solid var(--primary-color)';
+        
+        // Update hidden input and display
+        document.getElementById('bedIdInput').value = bedId;
+        document.getElementById('selectedBedText').textContent = 
+            `Bed ${bedData.bed_no} (Floor ${bedData.floor_no}, Room ${bedData.room_no}) - ₱${parseFloat(bedData.monthly_rent).toFixed(2)}`;
+        document.getElementById('selectedBedInfo').style.display = 'block';
+    }
+    <?php endif; ?>
 
-            // Validate bed selection before proceeding
-            form.addEventListener('submit', function(e) {
-                if (e.submitter && e.submitter.name === 'step3' && !selectedBed) {
+    // Form submission handling
+    const form = document.getElementById('tenantForm');
+    if (form) {
+        form.addEventListener('submit', function(e) {
+            const submitter = e.submitter;
+            
+            if (!submitter) {
+                e.preventDefault();
+                return false;
+            }
+            
+            // Handle step3 (bed selection) validation
+            if (submitter.name === 'step3') {
+                <?php if ($current_step == 3): ?>
+                if (!selectedBed) {
                     e.preventDefault();
                     alert('Please select a bed before proceeding');
                     return false;
                 }
-            });
-            <?php endif; ?>
-
-
-        // Handle navigation button clicks
-        navigationButtons.forEach(button => {
-            button.addEventListener('click', function(e) {
-                // Show loading spinner
-                this.classList.add('loading');
                 
-                // For next buttons, validate required fields
-                if (this.name.startsWith('step') || this.name === 'complete') {
-                    let isValid = true;
-                    
-                    // Special validation for step 4 (terms acceptance)
-                    if (this.name === 'step4') {
-                        const termsAccepted = form.querySelector('#accept_terms').checked;
-                        if (!termsAccepted) {
-                            isValid = false;
-                            alert('You must accept the terms and conditions to proceed');
-                            this.classList.remove('loading');
-                            return false;
-                        }
-                    }
-                    
-                    // For final submission (complete button), validate all fields
-                    if (this.name === 'complete') {
-                        if (!form.checkValidity()) {
-                            isValid = false;
-                            form.classList.add('was-validated');
-                            this.classList.remove('loading');
-                            return false;
-                        }
-                    }
-                    
-                    if (!isValid) {
-                        this.classList.remove('loading');
-                        return false;
-                    }
-                }
-                
-                // For all valid cases, allow form submission
-                return true;
-            });
-        });
-
-        // Add this to your form validation JavaScript
-        form.addEventListener('submit', function(e) {
-            if (e.submitter && e.submitter.name === 'complete') {
-                // Check if payment method is selected
-                if (!document.querySelector('input[name="payment_method"]:checked')) {
+                const selectedBedElement = document.querySelector(`.bed-card[data-bed-id="${selectedBed}"]`);
+                if (selectedBedElement?.dataset.status === 'Occupied') {
                     e.preventDefault();
-                    alert('Please select a payment method');
+                    alert('Cannot select an occupied bed. Please choose a vacant bed.');
                     return false;
                 }
-                
-                // Other validations...
+                <?php endif; ?>
             }
-        });
-        
-        // Handle form submission to prevent double submission
-        form.addEventListener('submit', function(e) {
-            // If the submit was triggered by a navigation button, let it handle the validation
-            if (!e.submitter || 
-                (e.submitter.name !== 'prev_step' && 
-                 !e.submitter.name.startsWith('step') && 
-                 e.submitter.name !== 'complete')) {
+            
+            // Only allow our navigation buttons to submit
+            if (submitter.name !== 'prev_step' && 
+                !submitter.name.startsWith('step') && 
+                submitter.name !== 'complete') {
                 e.preventDefault();
                 return false;
             }
         });
-    });
-        // Photo preview functionality
-        document.getElementById('profile_picture').addEventListener('change', function(e) {
-            const preview = document.getElementById('photoPreview');
-            const file = e.target.files[0];
-            const reader = new FileReader();
-            
-            reader.onload = function(e) {
-                preview.innerHTML = `<img src="${e.target.result}" alt="Profile Preview">`;
-            }
-            
-            if (file) {
-                reader.readAsDataURL(file);
-            }
-        });
+    }
 
-
-        <?php if (isset($showSuccessModal) && $showSuccessModal): ?>
-    document.addEventListener('DOMContentLoaded', function() {
-        var successModal = new bootstrap.Modal(document.getElementById('successModal'));
-        successModal.show();
-        
-        // Prevent closing by clicking backdrop or pressing escape
-        successModal._element.addEventListener('hide.bs.modal', function (event) {
-            return false;
-        });
+    <?php if (isset($showSuccessModal) && $showSuccessModal): ?>
+    // Success modal handling
+    const successModal = new bootstrap.Modal(document.getElementById('successModal'));
+    successModal.show();
+    
+    // Prevent closing by clicking backdrop or pressing escape
+    successModal._element.addEventListener('hide.bs.modal', function(event) {
+        event.preventDefault();
+        return false;
     });
     <?php endif; ?>
-
+});
 </script>
+
 <!-- Success Modal -->
 <div class="modal fade" id="successModal" tabindex="-1" aria-labelledby="successModalLabel" aria-hidden="true">
     <div class="modal-dialog">
@@ -1288,10 +1275,10 @@ $showSuccessModal = isset($_GET['success']) && $_GET['success'] == 1;
             <div class="modal-body">
                 <p>Tenant has been successfully registered. What would you like to do next?</p>
                 <div class="d-flex flex-column gap-2">
-                    <a href="print-contract.php?tenant_id=<?= $tenantId ?? '' ?>" class="btn btn-outline-primary" target="_blank">
+                    <a href="print-contract.php?tenant_id=<?= $_SESSION['new_tenant_ids']['tenant_id'] ?? '' ?>" class="btn btn-outline-primary" target="_blank">
                         <i class="bi bi-file-earmark-text"></i> Print Contract
                     </a>
-                    <a href="print-receipt.php?payment_id=<?= $paymentId ?? '' ?>" class="btn btn-outline-success" target="_blank">
+                    <a href="print-receipt.php?payment_id=<?= $_SESSION['new_tenant_ids']['payment_id'] ?? '' ?>" class="btn btn-outline-success" target="_blank">
                         <i class="bi bi-receipt"></i> Print Receipt
                     </a>
                     <a href="tenant.php" class="btn btn-primary">
@@ -1304,7 +1291,6 @@ $showSuccessModal = isset($_GET['success']) && $_GET['success'] == 1;
 </div>
 </body>
 </html>
-
 
 <?php 
 $conn->close();

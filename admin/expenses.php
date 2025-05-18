@@ -46,8 +46,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_expense_type'])) 
         header("Location: expenses.php");
         exit;
     }
-    $insertStmt->close();
-    $conn->close();
 }
 
 include '../connection/db.php';
@@ -246,7 +244,6 @@ if (isset($_GET['delete']) && is_numeric($_GET['delete'])) {
             header("Location: expenses.php?error=" . urlencode("Error deleting expense: " . $conn->error));
             exit;
         }
-        $deleteStmt->close();
     }
 }
 ?>

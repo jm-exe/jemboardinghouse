@@ -146,7 +146,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_expense'])) {
             header("Location: expenses.php?action=edit");
             exit;
         }
-        $updateStmt->close();
     } else {
         $_SESSION['error_message'] = implode(" ", $errors);
         // Regenerate monthOptions for the selected academic year to display in the form

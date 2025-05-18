@@ -29,7 +29,7 @@ if (isset($_GET['error'])) {
           </div>';
 }
 
-include '../connection/db.php';
+require_once '../connection/db.php';
 
 // Initialize variables
 $search = $_GET['search'] ?? '';
@@ -112,7 +112,6 @@ if ($stmt = $conn->prepare($query)) {
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
     <link rel="stylesheet" href="CSS/sidebar.css">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
     <style>
         .tenant-photo {
             width: 40px;
@@ -166,6 +165,7 @@ if ($stmt = $conn->prepare($query)) {
 <?php include 'includes/sidebar.php'; ?>
 
 <div class="main-content">
+        <div class="container-fluid mt-4">
     <div class="row mb-4">
         <div class="col">
             <h2><i class="bi bi-people-fill"></i> <strong>Tenant Management</strong></h2>
@@ -279,7 +279,7 @@ if ($stmt = $conn->prepare($query)) {
                             <td>
                                 <div class="tenant-photo">
                                     <?php if (!empty($tenant['profile_picture'])): ?>
-                                        <img src="uploads/profiles/<?= htmlspecialchars($tenant['profile_picture']) ?>" 
+                                        <img src="../uploads/profiles/<?= htmlspecialchars($tenant['profile_picture']) ?>" 
                                              alt="<?= htmlspecialchars($tenant['first_name'] . ' ' . $tenant['last_name']) ?>">
                                     <?php else: ?>
                                         <?= strtoupper(substr($tenant['first_name'], 0, 1) . substr($tenant['last_name'], 0, 1)) ?>
@@ -329,8 +329,7 @@ if ($stmt = $conn->prepare($query)) {
                             </td>
                             <td>
                                 <div class="btn-group btn-group-sm">
-                                    <a href="view-tenant.php?id=<?= $tenant['tenant_id'] ?>" class="btn btn-outline-primary" title="View"> 
-
+                                    <a href="view-tenant.php?id=<?= $tenant['tenant_id'] ?>" class="btn btn-outline-primary" title="View">
                                         <i class="bi bi-eye"></i>
                                     </a>
                                     <a href="edit-tenant.php?id=<?= $tenant['tenant_id'] ?>" class="btn btn-outline-secondary" title="Edit">
@@ -358,6 +357,8 @@ if ($stmt = $conn->prepare($query)) {
         </div>
     </div>
 </div>
+</div>
+
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>

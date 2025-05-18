@@ -1,6 +1,6 @@
 <?php
 session_start();
-require_once 'connection/db.php';
+require_once '../connection/db.php';
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     $_SESSION['error_message'] = "Invalid request method";

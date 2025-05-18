@@ -64,7 +64,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_academic_year']))
         header("Location: set-academic-year.php");
         exit;
     }
-    $insertStmt->close();
+   
 }
 
 // Handle setting an academic year as current
@@ -88,7 +88,7 @@ if (isset($_GET['set_current']) && is_numeric($_GET['set_current'])) {
         header("Location: set-academic-year.php");
         exit;
     }
-    $updateStmt->close();
+   
 }
 
 // Fetch all academic years

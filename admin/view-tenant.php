@@ -1,6 +1,6 @@
 <?php
 session_start();
-include '../connection/db.php';
+require_once '../connection/db.php';
 
 // 1. Validate Tenant ID
 if (!isset($_GET['id']) || empty(trim($_GET['id']))) {
@@ -39,7 +39,7 @@ try {
 
     // For students only, join the course table
     if (isset($_GET['type']) && $_GET['type'] === 'Student') {
-        $query = str_replace('FROM tenants t', 'FROM tenants t LEFT JOIN course c ON t.course_id = c.course_id', $query);
+        $query = str_replace('FROM tenants t', 'FROM tenants t JOIN course c ON t.course_id = c.course_id', $query);
         $query = str_replace('SELECT t.*,', 'SELECT t.*, c.course_code, c.course_description, c.major,', $query);
     }
 
@@ -88,9 +88,7 @@ if (isset($_SESSION['error_message'])) {
     <title>View Tenant - <?= htmlspecialchars($tenant['last_name'] . ', ' . $tenant['first_name']) ?></title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
-
     <link rel="stylesheet" href="CSS/sidebar.css">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" /></style>
     <style>
         .profile-header { background-color: #f8f9fa; border-radius: 0.375rem; padding: 1.5rem; margin-bottom: 1.5rem; }
         .tenant-photo {
@@ -127,6 +125,7 @@ if (isset($_SESSION['error_message'])) {
     <?php include 'includes/sidebar.php'; ?>
     
     <div class="main-content">
+        <div class="container-fluid mt-4">
         <!-- System Messages -->
         <?php if (!empty($messages)): ?>
             <?php foreach ($messages as $type => $message): ?>
@@ -239,28 +238,6 @@ if (isset($_SESSION['error_message'])) {
         </div>
         <?php endif; ?>
 
-        <!-- Account Information -->
-        <?php if (!empty($tenant['username'])): ?>
-        <div class="card detail-card credentials-alert">
-            <div class="card-header">
-                <i class="bi bi-person-badge"></i> Account Credentials
-            </div>
-            <div class="card-body">
-                <div class="row">
-                    <div class="col-md-6">
-                        <p><strong>Username:</strong> <?= htmlspecialchars($tenant['username']) ?></p>
-                    </div>
-                    <div class="col-md-6">
-                        <p><strong>Default Password:</strong> password123</p>
-                    </div>
-                </div>
-                <div class="alert alert-warning mt-2 mb-0">
-                    <i class="bi bi-exclamation-triangle"></i> Tenant should change password after first login
-                </div>
-            </div>
-        </div>
-        <?php endif; ?>
-
         <!-- Guardian Information -->
         <?php if (!empty($tenant['guardian_first_name'])): ?>
         <div class="card detail-card">
@@ -299,7 +276,7 @@ if (isset($_SESSION['error_message'])) {
                     </div>
                     <div class="col-md-4">
                         <p><strong>Start Date:</strong> <?= date('M j, Y', strtotime($tenant['start_date'])) ?></p>
-                        <p><strong>Due Date:</strong> <?= date('M j, Y', strtotime($tenant['due_date'])) ?></p>
+                        
                     </div>
                 </div>
                 <?php else: ?>
@@ -310,6 +287,7 @@ if (isset($_SESSION['error_message'])) {
             </div>
         </div>
 
+    </div>
     </div>
 </div>
 

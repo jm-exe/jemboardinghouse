@@ -17,7 +17,6 @@ unset($_SESSION['success_message']);
   <link rel="stylesheet" href="CSS/style.css">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
   <style>
-    .main-content { padding: 2rem; }
     .settings-card {
       cursor: pointer;
       transition: transform 0.2s ease-in-out;
@@ -59,6 +58,31 @@ unset($_SESSION['success_message']);
         </a>
       </div>
     </div>
+
+    <div class="col">
+      <div class="card bg-success text-white text-center p-4 settings-card">
+        <a href="set-business-owner.php">
+          <h5 class="card-title mb-0">Update Owner Information</h5>
+        </a>
+      </div>
+    </div>
+
+    <div class="col">
+      <div class="card bg-success text-white text-center p-4 settings-card">
+        <a href="set-appliance.php">
+          <h5 class="card-title mb-0">Set Appliance</h5>
+        </a>
+      </div>
+    </div>
+
+    <div class="col">
+      <div class="card bg-success text-white text-center p-4 settings-card">
+        <a href="set-monthly-rate.php">
+          <h5 class="card-title mb-0">Set Monthly Rate</h5>
+        </a>
+      </div>
+    </div>
+
   </div>
 </div>
 

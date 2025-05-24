@@ -23,8 +23,9 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST['login'])) {
 
         if (password_verify($password, $hashedPassword)) {
             $_SESSION['username'] = $username;
-            $_SESSION['role'] = $role;
+            $_SESSION['role'] = $role; // Already set, kept for clarity
             $_SESSION['user_id'] = $user_id;
+            $_SESSION['user_role'] = $role; // Added for compatibility with system_config.php
 
             if ($role === "Tenant") {
                 if ($tenant_id) {
@@ -34,7 +35,18 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST['login'])) {
                     $errorMsg = "Tenant ID not found for this user.";
                 }
             } elseif ($role === "Admin") {
-                header("Location: admin/dashboard.php");
+                // Check if system is configured
+                $query = "SELECT COUNT(*) as count FROM settings WHERE setting_name = 'initial_setup_completed'";
+                $result = $conn->query($query);
+                $row = $result->fetch_assoc();
+
+                if ($row['count'] == 0) {
+                    // System not configured, redirect to system_config.php
+                    header("Location: admin/system_config.php");
+                } else {
+                    // System already configured, go to admin dashboard
+                    header("Location: admin/dashboard.php");
+                }
             } else {
                 $errorMsg = "Unknown user role.";
             }
@@ -51,15 +63,14 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST['login'])) {
 }
 ?>
 
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" >
+  <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Login</title>
-  <link rel="stylesheet" href="admin/CSS/style.css" >
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" >
+  <link rel="stylesheet" href="admin/CSS/style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
   <style>
     .error-message {
       color: red;
@@ -90,7 +101,6 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST['login'])) {
       <div class="login-container">
         <img src="Pictures/whitelogo.png" alt="Logo" class="image-class">
         <form class="login-form" action="" method="post">
-
           <div class="input-group">
             <label for="Username">Username:</label>
             <input type="text" name="Username" id="Username" required value="<?php echo isset($_POST['Username']) ? htmlspecialchars($_POST['Username']) : ''; ?>">

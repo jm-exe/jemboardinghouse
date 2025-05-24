@@ -75,8 +75,11 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
       <form action="" method="POST" enctype="multipart/form-data" class="mt-4">
         <div class="row">
           <div class="col-md-4 text-center">
-            <img src="<?= $tenant['profile_picture'] ? 'uploads/profiles/' . htmlspecialchars($tenant['profile_picture']) : 'Pictures/logo.png'; ?>" 
-                 class="img-fluid rounded-circle mb-3" style="max-width: 150px;" alt="Profile Image">
+            <div class="profile-pic-container mb-3 mx-auto">
+              <img src="<?= $tenant['profile_picture'] ? 'uploads/profiles/' . htmlspecialchars($tenant['profile_picture']) : 'Pictures/logo.png'; ?>" 
+                  alt="Profile Image">
+            </div>
+
             <div class="mb-3">
               <label for="profile_picture" class="form-label">Change Profile Picture</label>
               <input type="file" name="profile_picture" class="form-control">

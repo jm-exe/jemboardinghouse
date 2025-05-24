@@ -1,0 +1,87 @@
+body, html {
+            height: 100%;
+            background-color: #f8f9fa;
+            margin: 0;
+            padding: 0;
+        }
+
+       h4 {
+            font-weight: bold;
+            font-size: 2rem; /* Adjust as you like */
+            margin-bottom: 1rem;
+        }
+
+        .full-center-container {
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 24px 0;
+        }
+        .config-card {
+            width: 100%;
+            max-width: 900px; /* Increase max width */
+            border-radius: 16px;
+            box-shadow: 0 8px 32px 0 rgba(60, 60, 100, 0.12), 0 1.5px 4px 0 rgba(60,60,100,0.07);
+            padding: 32px 36px;
+            background: #fff;
+        }
+        @media (max-width: 900px) {
+            .config-card {
+                padding: 20px 10px;
+                max-width: 98vw;
+            }
+        }
+        .card-header {
+            border-radius: 16px 16px 0 0;
+        }
+
+        .card {
+            border-radius: 10px;
+        }
+    
+        .form-label {
+            font-weight: 500;
+        }
+        .course-entry {
+            background-color: #f1f3f5;
+            border-radius: 5px;
+        }
+        .btn-primary {
+            background-color: #007bff;
+            border-color: #007bff;
+        }
+        .btn-primary:hover {
+            background-color: #0056b3;
+            border-color: #0056b3;
+        }
+        .btn-outline-secondary {
+            border-color: #6c757d;
+        }
+        .btn-outline-secondary:hover {
+            background-color: #6c757d;
+            color: white;
+        }
+        .btn-success {
+            background-color: #28a745;
+            border-color: #28a745;
+        }
+        .btn-success:hover {
+            background-color: #218838;
+            border-color: #218838;
+        }
+        .alert {
+            max-width: 400px;
+        }
+        .progress-bar {
+            transition: width 0.3s ease-in-out;
+        }
+        .is-invalid {
+            border-color: #dc3545;
+        }
+        .invalid-feedback {
+            display: none;
+        }
+        .is-invalid ~ .invalid-feedback {
+            display: block;
+        }

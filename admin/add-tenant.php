@@ -19,11 +19,20 @@ $current_step = $_SESSION['current_step'];
 
 // Function to generate default username
 function generateUsername($firstName, $lastName) {
+    // Remove non-letters from both names
     $firstName = preg_replace('/[^a-zA-Z]/', '', $firstName);
     $lastName = preg_replace('/[^a-zA-Z]/', '', $lastName);
-    $baseUsername = strtolower(substr($firstName, 0, 1) . strtolower($lastName));
-    return $baseUsername;
+
+    // Create base username: whole first name + last name, all lowercase
+    $baseUsername = strtolower($firstName . $lastName);
+
+    // Generate a 10-digit random number (as a string, with leading zeros if needed)
+    $randomNumber = str_pad(mt_rand(0, 9999999999), 10, '0', STR_PAD_LEFT);
+
+    // Return the username with random 10-digit number
+    return $baseUsername . $randomNumber;
 }
+
 
 function getAcademicYearId($conn, $yearRange, $semester) {
     [$start_year, $end_year] = explode('-', $yearRange);
@@ -33,7 +42,6 @@ function getAcademicYearId($conn, $yearRange, $semester) {
     $result = $stmt->get_result();
     return $result->fetch_assoc()['academic_year_id'] ?? null;
 }
-
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (isset($_POST['step1'])) {
@@ -53,33 +61,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             'student_id' => $isStudent ? ($_POST['student_id'] ?? null) : null,
             'course_id' => $isStudent ? ($_POST['course_id'] ?? null) : null,
             'year_level' => $isStudent ? ($_POST['year_level'] ?? '1') : '1',
-            // Look up academic_year_id based on selected year and semester
             'academic_year_id' => $isStudent && isset($_POST['academic_year'], $_POST['semester']) 
-            ? getAcademicYearId($conn, $_POST['academic_year'], $_POST['semester']) 
-            : null,
-
-            'profile_picture' => null
+                ? getAcademicYearId($conn, $_POST['academic_year'], $_POST['semester']) 
+                : null
         ];
         
-        if (isset($_FILES['profile_picture']) && $_FILES['profile_picture']['error'] === UPLOAD_ERR_OK) {
-            $uploadDir = '../uploads/profiles/';
-            $allowedTypes = ['image/jpeg', 'image/png', 'image/gif'];
-            $maxSize = 2 * 1024 * 1024; // 2MB
-            
-            $fileInfo = finfo_open(FILEINFO_MIME_TYPE);
-            $mimeType = finfo_file($fileInfo, $_FILES['profile_picture']['tmp_name']);
-            finfo_close($fileInfo);
-            
-            if (in_array($mimeType, $allowedTypes) && $_FILES['profile_picture']['size'] <= $maxSize) {
-                $fileExt = pathinfo($_FILES['profile_picture']['name'], PATHINFO_EXTENSION);
-                $fileName = 'temp_' . uniqid() . '.' . $fileExt;
-                $targetPath = $uploadDir . $fileName;
-                
-                if (move_uploaded_file($_FILES['profile_picture']['tmp_name'], $targetPath)) {
-                    $_SESSION['tenant_data']['profile_picture'] = $fileName;
-                }
-            }
-        }
         $_SESSION['current_step'] = 2;
         header("Location: ".$_SERVER['PHP_SELF']);
         exit();
@@ -159,7 +145,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $t_is_student = $_SESSION['tenant_data']['is_student'];
             $t_tenant_type = $_SESSION['tenant_data']['tenant_type'];
 
-             // 3. Create user account
+            // 3. Create user account
             $defaultUsername = generateUsername($t_first_name, $t_last_name);
             $defaultPassword = 'password123';
             $hashedPassword = password_hash($defaultPassword, PASSWORD_DEFAULT);
@@ -172,8 +158,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $userId = $conn->insert_id;
             $userStmt->close();
 
-
-            
             $tenantStmt = $conn->prepare("INSERT INTO tenants 
                                        (academic_year_id, first_name, last_name, middle_name, 
                                         birthdate, address, gender, mobile_no, guardian_id, 
@@ -200,11 +184,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $tenantStmt->execute();
             $tenantId = $conn->insert_id;
             $tenantStmt->close();
-            
-           
-            
-            // Update tenant with user_id
-            $conn->query("UPDATE tenants SET user_id = $userId WHERE tenant_id = $tenantId");
             
             // 4. Assign bed
             $bed_id = $_SESSION['bed_data']['bed_id'];
@@ -245,19 +224,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             // 6. Process payment
             $amount_tendered = $_POST['amount_tendered'];
             $payment_method = $_POST['payment_method'] ?? 'Cash';
-            
+            $appliance_total = $_POST['appliance_total'] ?? 0;
+            $appliances = isset($_POST['appliances']) ? implode(', ', $_POST['appliances']) : 'None';
+
             $paymentStmt = $conn->prepare("INSERT INTO payments 
-                                        (user_id, boarding_id, payment_amount, payment_date, method) 
-                                        VALUES (?, ?, ?, ?, ?)");
+                                        (user_id, boarding_id, payment_amount, appliance_charges, appliances, payment_date, method) 
+                                        VALUES (?, ?, ?, ?, ?, ?, ?)");
             $payment_date = date('Y-m-d');
-            $paymentStmt->bind_param('iidss', 
+            $paymentStmt->bind_param('iidssss', 
                 $userId,
                 $boardingId,
                 $amount_tendered,
+                $appliance_total,
+                $appliances,
                 $payment_date,
                 $payment_method
             );
-            
             $paymentStmt->execute();
             $paymentId = $conn->insert_id;
             $paymentStmt->close();
@@ -378,8 +360,6 @@ $showSuccessModal = isset($_GET['success']) && $_GET['success'] == 1;
             background-color: #f5f7fa;
             color: var(--dark-color);
         }
-        
-        
         
         .card {
             border: none;
@@ -542,60 +522,28 @@ $showSuccessModal = isset($_GET['success']) && $_GET['success'] == 1;
             transition: all 0.3s ease;
             overflow: hidden;
         }
+
         
-        .photo-upload-container {
-            position: relative;
-            width: 120px;
-            height: 120px;
-            margin: 0 auto 1rem;
+        .credentials-box {
+            background-color: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: var(--border-radius);
+            padding: 1rem;
+            margin-bottom: 1rem;
         }
         
-        .photo-preview {
-            width: 100%;
-            height: 100%;
-            border-radius: 50%;
-            object-fit: cover;
-            background-color: #6c757d;
-            color: white;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 2.5rem;
-            font-weight: bold;
-            border: 3px solid #fff;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        .credentials-box h5 {
+            margin-bottom: 1rem;
+            color: var(--primary-color);
         }
         
-        .photo-preview img {
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
-            border-radius: 50%;
+        .credentials-box p {
+            margin-bottom: 0.5rem;
         }
         
-        .photo-upload-btn {
-            position: absolute;
-            bottom: 0;
-            right: 0;
-            transform: translate(25%, 25%);
-            width: 32px;
-            height: 32px;
-            border-radius: 50%;
-            background-color: #4361ee;
-            color: white;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            cursor: pointer;
-            border: 2px solid white;
-        }
-        
-        .photo-upload-btn:hover {
-            background-color: #3f37c9;
-        }
-        
-        #profile_picture {
-            display: none;
+        .credentials-box .alert {
+            margin-top: 1rem;
+            margin-bottom: 0;
         }
     </style>
 </head>
@@ -647,21 +595,6 @@ $showSuccessModal = isset($_GET['success']) && $_GET['success'] == 1;
                 <?php if ($current_step == 1): ?>
                 <div class="card-header">Personal Information</div>
                 <div class="card-body">
-                    <!-- Photo Upload Section -->
-                    <div class="photo-upload-container">
-                        <div class="photo-preview" id="photoPreview">
-                            <?php if (!empty($_SESSION['tenant_data']['profile_picture'])): ?>
-                                <img src="../uploads/profiles/<?= htmlspecialchars($_SESSION['tenant_data']['profile_picture']) ?>" 
-                                     alt="Profile Preview">
-                            <?php else: ?>
-                                <i class="bi bi-person"></i>
-                            <?php endif; ?>
-                        </div>
-                        <div class="photo-upload-btn" onclick="document.getElementById('profile_picture').click()">
-                            <i class="bi bi-camera"></i>
-                        </div>
-                        <input type="file" id="profile_picture" name="profile_picture" accept="image/*">
-                    </div>
 
                     <div class="row g-3">
                         <div class="col-md-6">
@@ -858,8 +791,7 @@ $showSuccessModal = isset($_GET['success']) && $_GET['success'] == 1;
                         </button>
                         <button type="submit" name="step2" class="btn btn-primary">
                             Next <i class="bi bi-arrow-right"></i>
-                        </button>
-                    </div>
+                                            </div>
                 </div>
                 <?php endif; ?>
                 
@@ -991,24 +923,62 @@ $showSuccessModal = isset($_GET['success']) && $_GET['success'] == 1;
                                 <div class="card-body">
                                     <div class="d-flex justify-content-between mb-2">
                                         <span>Monthly Rent:</span>
-                                        <span>₱<?= number_format($beds[0]['monthly_rent'] ?? 0, 2) ?></span>
+                                        <span>₱<?= number_format($beds[0]['monthly_rent'] ?? 1100, 2) ?></span>
+                                    </div>
+                                    
+                                    <!-- Appliance Charges Section -->
+                                    <div class="mb-3">
+                                        <label class="form-label">Additional Appliances (₱100.00 each):</label>
+                                        <div class="appliance-list">
+                                            <div class="form-check">
+                                                <input class="form-check-input appliance-check" type="checkbox" 
+                                                    name="appliances[]" value="Rice Cooker" id="riceCooker">
+                                                <label class="form-check-label" for="riceCooker">
+                                                    Rice Cooker (+₱100.00)
+                                                </label>
+                                            </div>
+                                            <div class="form-check">
+                                                <input class="form-check-input appliance-check" type="checkbox" 
+                                                    name="appliances[]" value="Electric Fan" id="electricFan">
+                                                <label class="form-check-label" for="electricFan">
+                                                    Electric Fan (+₱100.00)
+                                                </label>
+                                            </div>
+                                            <div class="form-check">
+                                                <input class="form-check-input appliance-check" type="checkbox" 
+                                                    name="appliances[]" value="Laptop" id="laptop">
+                                                <label class="form-check-label" for="laptop">
+                                                    Laptop (+₱100.00)
+                                                </label>
+                                            </div>
+                                            <div class="form-check">
+                                                <input class="form-check-input appliance-check" type="checkbox" 
+                                                    name="appliances[]" value="Water Heater" id="waterHeater">
+                                                <label class="form-check-label" for="waterHeater">
+                                                    Water Heater (+₱100.00)
+                                                </label>
+                                            </div>
+                                            <div class="form-check">
+                                                <input class="form-check-input appliance-check" type="checkbox" 
+                                                    name="appliances[]" value="Flat Iron" id="flatIron">
+                                                <label class="form-check-label" for="flatIron">
+                                                    Flat Iron (+₱100.00)
+                                                </label>
+                                            </div>
+                                        </div>
+                                        <input type="hidden" name="appliance_total" id="applianceTotal" value="0">
+                                    </div>
+                                    
+                                    <div class="d-flex justify-content-between mb-2">
+                                        <span>Appliance Charges:</span>
+                                        <span id="applianceCharges">₱0.00</span>
                                     </div>
                                     <hr>
                                     <div class="d-flex justify-content-between fw-bold">
                                         <span>Total Amount Due:</span>
-                                        <span>₱<?= number_format($beds[0]['monthly_rent'] ?? 0, 2) ?></span>
+                                        <span id="totalAmount">₱<?= number_format($beds[0]['monthly_rent'] ?? 1100, 2) ?></span>
                                     </div>
                                 </div>
-                            </div>
-                            
-                            <div class="alert alert-info mt-3">
-                                <h6>Account Information</h6>
-                                <p>A tenant account will be created with these credentials:</p>
-                                <p><strong>Username:</strong> <?= generateUsername(
-                                    $_SESSION['tenant_data']['first_name'],
-                                    $_SESSION['tenant_data']['last_name']
-                                ) ?></p>
-                                <p><strong>Default Password:</strong> password123</p>
                             </div>
                         </div>
                         <div class="col-md-6">
@@ -1044,8 +1014,9 @@ $showSuccessModal = isset($_GET['success']) && $_GET['success'] == 1;
                                     <div class="mb-3">
                                         <label class="form-label">Amount Tendered *</label>
                                         <input type="number" step="0.01" name="amount_tendered" 
-                                               class="form-control" required
-                                               min="<?= $beds[0]['monthly_rent'] ?? 0 ?>">
+                                            class="form-control" required
+                                            min="<?= $beds[0]['monthly_rent'] ?? 1100 ?>" 
+                                            id="amountTendered">
                                     </div>
                                 </div>
                             </div>
@@ -1069,218 +1040,226 @@ $showSuccessModal = isset($_GET['success']) && $_GET['success'] == 1;
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 <script>
-document.addEventListener('DOMContentLoaded', function() {
-    // Photo preview functionality
-    const profilePictureInput = document.getElementById('profile_picture');
-    if (profilePictureInput) {
-        profilePictureInput.addEventListener('change', function(e) {
-            const preview = document.getElementById('photoPreview');
-            const file = e.target.files[0];
-            
-            if (file) {
-                const reader = new FileReader();
-                reader.onload = function(e) {
-                    preview.innerHTML = `<img src="${e.target.result}" alt="Profile Preview">`;
-                }
-                reader.readAsDataURL(file);
-            }
+    document.addEventListener('DOMContentLoaded', function() {
+
+        // Appliance charges calculation
+        document.querySelectorAll('.appliance-check').forEach(checkbox => {
+            checkbox.addEventListener('change', updateCharges);
         });
-    }
 
-    // Handle student/non-student toggle
-    const isStudentSelect = document.getElementById('isStudentSelect');
-    const studentFields = document.getElementById('studentFields');
-    
-    if (isStudentSelect && studentFields) {
-        function toggleStudentFields() {
-            const isStudent = isStudentSelect.value === '1';
-            studentFields.style.display = isStudent ? 'block' : 'none';
+        function updateCharges() {
+            const baseRent = <?= $beds[0]['monthly_rent'] ?? 1100 ?>;
+            const appliancePrice = 100; // Each appliance costs ₱100
+            const checkedAppliances = document.querySelectorAll('.appliance-check:checked');
+            const applianceCount = checkedAppliances.length;
+            const applianceTotal = applianceCount * appliancePrice;
+            const totalAmount = baseRent + applianceTotal;
             
-            // Toggle required attribute for student fields
-            document.querySelectorAll('#studentFields select, #studentFields input').forEach(function(field) {
-                field.required = isStudent;
-            });
+            // Update display
+            document.getElementById('applianceCharges').textContent = `₱${applianceTotal.toFixed(2)}`;
+            document.getElementById('totalAmount').textContent = `₱${totalAmount.toFixed(2)}`;
+            
+            // Update hidden field for form submission
+            document.getElementById('applianceTotal').value = applianceTotal;
+            
+            // Update minimum payment amount
+            document.getElementById('amountTendered').min = totalAmount;
         }
+
+        // Handle student/non-student toggle
+        const isStudentSelect = document.getElementById('isStudentSelect');
+        const studentFields = document.getElementById('studentFields');
         
-        // Initialize and add event listener
-        toggleStudentFields();
-        isStudentSelect.addEventListener('change', toggleStudentFields);
-    }
+        if (isStudentSelect && studentFields) {
+            function toggleStudentFields() {
+                const isStudent = isStudentSelect.value === '1';
+                studentFields.style.display = isStudent ? 'block' : 'none';
+                
+                // Toggle required attribute for student fields
+                document.querySelectorAll('#studentFields select, #studentFields input').forEach(function(field) {
+                    field.required = isStudent;
+                });
+            }
+            
+            // Initialize and add event listener
+            toggleStudentFields();
+            isStudentSelect.addEventListener('change', toggleStudentFields);
+        }
 
-    <?php if ($current_step == 3 && !empty($floors)): ?>
-    // Bed selection functionality
-    const bedOptions = <?= json_encode($bedOptions) ?>;
-    let selectedFloor = null;
-    let selectedRoom = null;
-    let selectedBed = null;
+        <?php if ($current_step == 3 && !empty($floors)): ?>
+        // Bed selection functionality
+        const bedOptions = <?= json_encode($bedOptions) ?>;
+        let selectedFloor = null;
+        let selectedRoom = null;
+        let selectedBed = null;
 
-    // Floor selection
-    document.querySelectorAll('.floor-btn').forEach(btn => {
-        btn.addEventListener('click', function() {
-            selectedFloor = this.dataset.floor;
-            selectedRoom = null;
+        // Floor selection
+        document.querySelectorAll('.floor-btn').forEach(btn => {
+            btn.addEventListener('click', function() {
+                selectedFloor = this.dataset.floor;
+                selectedRoom = null;
+                selectedBed = null;
+                
+                // Update UI
+                document.querySelectorAll('.floor-btn').forEach(b => b.classList.remove('active'));
+                this.classList.add('active');
+                
+                // Show rooms for this floor
+                const roomButtonsContainer = document.getElementById('roomButtons');
+                roomButtonsContainer.innerHTML = '';
+                
+                const rooms = bedOptions[selectedFloor];
+                
+                for (const roomNo in rooms) {
+                    const roomBtn = document.createElement('button');
+                    roomBtn.type = 'button';
+                    roomBtn.className = 'btn btn-outline-secondary room-btn';
+                    roomBtn.dataset.room = roomNo;
+                    roomBtn.textContent = `Room ${roomNo}`;
+                    roomBtn.addEventListener('click', () => selectRoom(roomNo));
+                    roomButtonsContainer.appendChild(roomBtn);
+                }
+                
+                // Show room selection section
+                document.getElementById('roomSelection').style.display = 'block';
+                document.getElementById('bedSelection').style.display = 'none';
+                document.getElementById('selectedBedInfo').style.display = 'none';
+            });
+        });
+
+        // Room selection
+        function selectRoom(roomNo) {
+            selectedRoom = roomNo;
             selectedBed = null;
             
-            // Update UI
-            document.querySelectorAll('.floor-btn').forEach(b => b.classList.remove('active'));
-            this.classList.add('active');
+            // Update UI - highlight selected room button
+            document.querySelectorAll('.room-btn').forEach(b => b.classList.remove('active'));
+            document.querySelector(`.room-btn[data-room="${roomNo}"]`).classList.add('active');
             
-            // Show rooms for this floor
-            const roomButtonsContainer = document.getElementById('roomButtons');
-            roomButtonsContainer.innerHTML = '';
+            // Show beds for this room
+            const bedCardsContainer = document.getElementById('bedCards');
+            bedCardsContainer.innerHTML = '';
             
-            const rooms = bedOptions[selectedFloor];
+            const beds = bedOptions[selectedFloor][selectedRoom];
             
-            for (const roomNo in rooms) {
-                const roomBtn = document.createElement('button');
-                roomBtn.type = 'button';
-                roomBtn.className = 'btn btn-outline-secondary room-btn';
-                roomBtn.dataset.room = roomNo;
-                roomBtn.textContent = `Room ${roomNo}`;
-                roomBtn.addEventListener('click', () => selectRoom(roomNo));
-                roomButtonsContainer.appendChild(roomBtn);
-            }
-            
-            // Show room selection section
-            document.getElementById('roomSelection').style.display = 'block';
-            document.getElementById('bedSelection').style.display = 'none';
-            document.getElementById('selectedBedInfo').style.display = 'none';
-        });
-    });
-
-    // Room selection
-    function selectRoom(roomNo) {
-        selectedRoom = roomNo;
-        selectedBed = null;
-        
-        // Update UI - highlight selected room button
-        document.querySelectorAll('.room-btn').forEach(b => b.classList.remove('active'));
-        document.querySelector(`.room-btn[data-room="${roomNo}"]`).classList.add('active');
-        
-        // Show beds for this room
-        const bedCardsContainer = document.getElementById('bedCards');
-        bedCardsContainer.innerHTML = '';
-        
-        const beds = bedOptions[selectedFloor][selectedRoom];
-        
-        if (beds?.length > 0) {
-            beds.forEach(bed => {
-                const isVacant = bed.status === 'Vacant';
-                const statusClass = isVacant ? 'vacant' : 'occupied';
-                const statusBadge = isVacant ? 'bg-success' : 'bg-danger';
-                
-                const bedCard = document.createElement('div');
-                bedCard.className = 'col-md-4 mb-3';
-                bedCard.innerHTML = `
-                    <div class="card bed-card ${statusClass}" 
-                        data-bed-id="${bed.bed_id}"
-                        data-status="${bed.status}">
-                        <div class="card-body">
-                            <h5 class="card-title">Bed ${bed.bed_no}</h5>
-                            <p class="card-text">
-                                Floor ${bed.floor_no}, Room ${bed.room_no}<br>
-                                Deck: ${bed.deck}<br>
-                                Status: <span class="badge ${statusBadge}">${bed.status}</span><br>
-                                Rent: ₱${parseFloat(bed.monthly_rent).toFixed(2)}
-                            </p>
+            if (beds?.length > 0) {
+                beds.forEach(bed => {
+                    const isVacant = bed.status === 'Vacant';
+                    const statusClass = isVacant ? 'vacant' : 'occupied';
+                    const statusBadge = isVacant ? 'bg-success' : 'bg-danger';
+                    
+                    const bedCard = document.createElement('div');
+                    bedCard.className = 'col-md-4 mb-3';
+                    bedCard.innerHTML = `
+                        <div class="card bed-card ${statusClass}" 
+                            data-bed-id="${bed.bed_id}"
+                            data-status="${bed.status}">
+                            <div class="card-body">
+                                <h5 class="card-title">Bed ${bed.bed_no}</h5>
+                                <p class="card-text">
+                                    Floor ${bed.floor_no}, Room ${bed.room_no}<br>
+                                    Deck: ${bed.deck}<br>
+                                    Status: <span class="badge ${statusBadge}">${bed.status}</span><br>
+                                    Rent: ₱${parseFloat(bed.monthly_rent).toFixed(2)}
+                                </p>
+                            </div>
                         </div>
-                    </div>
-                `;
-                
-                // Only make vacant beds clickable
-                if (isVacant) {
-                    bedCard.querySelector('.bed-card').addEventListener('click', () => selectBed(bed.bed_id));
-                }
-                
-                bedCardsContainer.appendChild(bedCard);
-            });
-        } else {
-            bedCardsContainer.innerHTML = '<div class="col-12"><div class="alert alert-warning">No beds in this room</div></div>';
+                    `;
+                    
+                    // Only make vacant beds clickable
+                    if (isVacant) {
+                        bedCard.querySelector('.bed-card').addEventListener('click', () => selectBed(bed.bed_id));
+                    }
+                    
+                    bedCardsContainer.appendChild(bedCard);
+                });
+            } else {
+                bedCardsContainer.innerHTML = '<div class="col-12"><div class="alert alert-warning">No beds in this room</div></div>';
+            }
+            
+            document.getElementById('bedSelection').style.display = 'block';
+            document.getElementById('selectedBedInfo').style.display = 'none';
         }
-        
-        document.getElementById('bedSelection').style.display = 'block';
-        document.getElementById('selectedBedInfo').style.display = 'none';
-    }
 
-    // Bed selection
-    function selectBed(bedId) {
-        selectedBed = bedId;
-        
-        // Find the bed data
-        const beds = bedOptions[selectedFloor][selectedRoom];
-        const bedData = beds.find(b => b.bed_id == bedId);
-        
-        if (!bedData) return;
-        
-        // Update UI - highlight selected bed
-        document.querySelectorAll('.bed-card').forEach(card => {
-            card.classList.remove('selected');
-            card.style.border = '';
-        });
-        
-        const selectedCard = document.querySelector(`.bed-card[data-bed-id="${bedId}"]`);
-        selectedCard.classList.add('selected');
-        selectedCard.style.border = '2px solid var(--primary-color)';
-        
-        // Update hidden input and display
-        document.getElementById('bedIdInput').value = bedId;
-        document.getElementById('selectedBedText').textContent = 
-            `Bed ${bedData.bed_no} (Floor ${bedData.floor_no}, Room ${bedData.room_no}) - ₱${parseFloat(bedData.monthly_rent).toFixed(2)}`;
-        document.getElementById('selectedBedInfo').style.display = 'block';
-    }
-    <?php endif; ?>
+        // Bed selection
+        function selectBed(bedId) {
+            selectedBed = bedId;
+            
+            // Find the bed data
+            const beds = bedOptions[selectedFloor][selectedRoom];
+            const bedData = beds.find(b => b.bed_id == bedId);
+            
+            if (!bedData) return;
+            
+            // Update UI - highlight selected bed
+            document.querySelectorAll('.bed-card').forEach(card => {
+                card.classList.remove('selected');
+                card.style.border = '';
+            });
+            
+            const selectedCard = document.querySelector(`.bed-card[data-bed-id="${bedId}"]`);
+            selectedCard.classList.add('selected');
+            selectedCard.style.border = '2px solid var(--primary-color)';
+            
+            // Update hidden input and display
+            document.getElementById('bedIdInput').value = bedId;
+            document.getElementById('selectedBedText').textContent = 
+                `Bed ${bedData.bed_no} (Floor ${bedData.floor_no}, Room ${bedData.room_no}) - ₱${parseFloat(bedData.monthly_rent).toFixed(2)}`;
+            document.getElementById('selectedBedInfo').style.display = 'block';
+        }
+        <?php endif; ?>
 
-    // Form submission handling
-    const form = document.getElementById('tenantForm');
-    if (form) {
-        form.addEventListener('submit', function(e) {
-            const submitter = e.submitter;
-            
-            if (!submitter) {
-                e.preventDefault();
-                return false;
-            }
-            
-            // Handle step3 (bed selection) validation
-            if (submitter.name === 'step3') {
-                <?php if ($current_step == 3): ?>
-                if (!selectedBed) {
+        // Form submission handling
+        const form = document.getElementById('tenantForm');
+        if (form) {
+            form.addEventListener('submit', function(e) {
+                const submitter = e.submitter;
+                
+                if (!submitter) {
                     e.preventDefault();
-                    alert('Please select a bed before proceeding');
                     return false;
                 }
                 
-                const selectedBedElement = document.querySelector(`.bed-card[data-bed-id="${selectedBed}"]`);
-                if (selectedBedElement?.dataset.status === 'Occupied') {
+                // Handle step3 (bed selection) validation
+                if (submitter.name === 'step3') {
+                    <?php if ($current_step == 3): ?>
+                    if (!selectedBed) {
+                        e.preventDefault();
+                        alert('Please select a bed before proceeding');
+                        return false;
+                    }
+                    
+                    const selectedBedElement = document.querySelector(`.bed-card[data-bed-id="${selectedBed}"]`);
+                    if (selectedBedElement?.dataset.status === 'Occupied') {
+                        e.preventDefault();
+                        alert('Cannot select an occupied bed. Please choose a vacant bed.');
+                        return false;
+                    }
+                    <?php endif; ?>
+                }
+                
+                // Only allow our navigation buttons to submit
+                if (submitter.name !== 'prev_step' && 
+                    !submitter.name.startsWith('step') && 
+                    submitter.name !== 'complete') {
                     e.preventDefault();
-                    alert('Cannot select an occupied bed. Please choose a vacant bed.');
                     return false;
                 }
-                <?php endif; ?>
-            }
-            
-            // Only allow our navigation buttons to submit
-            if (submitter.name !== 'prev_step' && 
-                !submitter.name.startsWith('step') && 
-                submitter.name !== 'complete') {
-                e.preventDefault();
-                return false;
-            }
-        });
-    }
+            });
+        }
 
-    <?php if (isset($showSuccessModal) && $showSuccessModal): ?>
-    // Success modal handling
-    const successModal = new bootstrap.Modal(document.getElementById('successModal'));
-    successModal.show();
-    
-    // Prevent closing by clicking backdrop or pressing escape
-    successModal._element.addEventListener('hide.bs.modal', function(event) {
-        event.preventDefault();
-        return false;
+        <?php if (isset($showSuccessModal) && $showSuccessModal): ?>
+        // Success modal handling
+        const successModal = new bootstrap.Modal(document.getElementById('successModal'));
+        successModal.show();
+        
+        // Prevent closing by clicking backdrop or pressing escape
+        successModal._element.addEventListener('hide.bs.modal', function(event) {
+            event.preventDefault();
+            return false;
+        });
+        <?php endif; ?>
     });
-    <?php endif; ?>
-});
 </script>
 
 <!-- Success Modal -->
@@ -1292,7 +1271,22 @@ document.addEventListener('DOMContentLoaded', function() {
                 <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
             <div class="modal-body">
-                <p>Tenant has been successfully registered. What would you like to do next?</p>
+                <?php if (isset($_SESSION['new_tenant_credentials'])): ?>
+                <div class="credentials-box">
+                    <h5>Tenant Credentials</h5>
+                    <p><strong>Name:</strong> <?= htmlspecialchars($_SESSION['new_tenant_credentials']['name']) ?></p>
+                    <p><strong>Username:</strong> <?= htmlspecialchars($_SESSION['new_tenant_credentials']['username']) ?></p>
+                    <p><strong>Password:</strong> <?= htmlspecialchars($_SESSION['new_tenant_credentials']['password']) ?></p>
+                    <div class="alert alert-warning">
+                        <i class="bi bi-exclamation-triangle"></i> Please note these credentials as they won't be shown again.
+                    </div>
+                </div>
+                <?php 
+                // Clear the credentials after displaying them
+                unset($_SESSION['new_tenant_credentials']);
+                endif; ?>
+                
+                <p>What would you like to do next?</p>
                 <div class="d-flex flex-column gap-2">
                     <a href="print-contract.php?tenant_id=<?= $_SESSION['new_tenant_ids']['tenant_id'] ?? '' ?>" class="btn btn-outline-primary" target="_blank">
                         <i class="bi bi-file-earmark-text"></i> Print Contract

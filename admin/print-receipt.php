@@ -6,15 +6,10 @@ require_once '../connection/db.php';
 error_reporting(E_ALL);
 ini_set('display_errors', 1);
 
-// 1. First try to get payment_id from URL
-$paymentId = $_GET['payment_id'] ?? null;
+// Get payment_id from URL or session
+$paymentId = $_GET['payment_id'] ?? ($_SESSION['new_tenant_ids']['payment_id'] ?? null);
 
-// 2. If not in URL, try session
-if (!$paymentId && isset($_SESSION['new_tenant_ids']['payment_id'])) {
-    $paymentId = $_SESSION['new_tenant_ids']['payment_id'];
-}
-
-// 3. Validate payment ID
+// Validate payment ID
 if (!$paymentId || !is_numeric($paymentId)) {
     die('<div style="padding:20px; border:1px solid #f00; color:#f00;">
             <h3>Error Generating Receipt</h3>
@@ -24,7 +19,6 @@ if (!$paymentId || !is_numeric($paymentId)) {
                 <li>Find the tenant in the list</li>
                 <li>Use the "Print Receipt" option there</li>
             </ol>
-            <p>If the problem persists, contact support with the tenant name and payment date.</p>
         </div>');
 }
 
@@ -36,60 +30,67 @@ try {
         throw new Exception("Could not connect to database");
     }
 
-    // Get payment details
-    $stmt = $conn->prepare("SELECT * FROM payments WHERE payment_id = ?");
+    // Get payment details with all related information
+    $stmt = $conn->prepare("
+        SELECT 
+            p.*,
+            t.first_name, t.last_name, t.mobile_no,
+            bg.start_date, bg.due_date,
+            b.bed_no, b.monthly_rent,
+            r.room_no,
+            f.floor_no
+        FROM payments p
+        JOIN boarding bg ON p.boarding_id = bg.boarding_id
+        JOIN tenants t ON bg.tenant_id = t.tenant_id
+        JOIN beds b ON bg.bed_id = b.bed_id
+        JOIN rooms r ON b.room_id = r.room_id
+        JOIN floors f ON r.floor_id = f.floor_id
+        WHERE p.payment_id = ?
+    ");
+    
+    if (!$stmt) {
+        throw new Exception("Failed to prepare statement: " . $conn->error);
+    }
+    
     $stmt->bind_param("i", $paymentId);
     if (!$stmt->execute()) {
-        throw new Exception("Database query failed");
+        throw new Exception("Database query failed: " . $stmt->error);
     }
     
     $payment = $stmt->get_result()->fetch_assoc();
     $stmt->close();
     
     if (!$payment) {
-        throw new Exception("Payment record not found");
+        throw new Exception("Payment record not found for ID: $paymentId");
     }
 
-    // Get related records
-    $queries = [
-        'boarding' => "SELECT * FROM boarding WHERE boarding_id = ?",
-        'tenant' => "SELECT * FROM tenants WHERE tenant_id = ?",
-        'bed' => "SELECT * FROM beds WHERE bed_id = ?",
-        'room' => "SELECT * FROM rooms WHERE room_id = ?",
-        'floor' => "SELECT * FROM floors WHERE floor_id = ?"
-    ];
-    
-    $data = ['payment' => $payment];
-    
-    foreach ($queries as $key => $query) {
-        $id = match($key) {
-            'boarding' => $payment['boarding_id'],
-            'tenant' => $data['boarding']['tenant_id'],
-            'bed' => $data['boarding']['bed_id'],
-            'room' => $data['bed']['room_id'],
-            'floor' => $data['room']['floor_id']
-        };
-        
-        $stmt = $conn->prepare($query);
-        $stmt->bind_param("i", $id);
-        $stmt->execute();
-        $data[$key] = $stmt->get_result()->fetch_assoc();
-        $stmt->close();
-    }
+    // Format dates safely with null checks
+    $formatDate = function($date) {
+        return $date && strtotime($date) ? date('F j, Y', strtotime($date)) : 'Not specified';
+    };
 
-    // Format dates
     $dates = [
-        'payment' => date('F j, Y', strtotime($data['payment']['payment_date'])),
-        'start' => date('F j, Y', strtotime($data['boarding']['start_date'])),
-        'due' => !empty($data['boarding']['due_date']) ? date('F j, Y', strtotime($data['boarding']['due_date'])) : null
+        'payment' => $formatDate($payment['payment_date'] ?? null),
+        'start' => $formatDate($payment['start_date'] ?? null),
+        'due' => $formatDate($payment['due_date'] ?? null)
     ];
+
+    // Calculate amounts with null checks
+    $baseRent = (float)($payment['monthly_rent'] ?? 0);
+    $applianceCharges = (float)($payment['appliance_charges'] ?? 0);
+    $totalAmount = $baseRent + $applianceCharges;
+
+    // Process appliances safely
+    $appliances = [];
+    if (!empty($payment['appliances']) && $payment['appliances'] !== 'None' && is_string($payment['appliances'])) {
+        $appliances = explode(', ', $payment['appliances']);
+    }
 
 } catch (Exception $e) {
     die('<div style="padding:20px; border:1px solid #f00; color:#f00;">
             <h3>Error Generating Receipt</h3>
             <p>'.htmlspecialchars($e->getMessage()).'</p>
             <p>Reference: PAY-'.htmlspecialchars($paymentId).'</p>
-            <p>Please contact support with this reference.</p>
         </div>');
 }
 
@@ -102,75 +103,225 @@ function safe($value) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Receipt for Payment #<?= safe($paymentId) ?></title>
+    <title>Receipt #<?= safe($paymentId) ?></title>
     <style>
-        body { font-family: Arial, sans-serif; margin: 20px; }
-        .header { text-align: center; margin-bottom: 30px; }
-        .receipt-body { max-width: 600px; margin: 0 auto; }
-        .receipt-row { display: flex; margin-bottom: 10px; }
-        .receipt-label { font-weight: bold; width: 150px; }
-        .footer { margin-top: 40px; text-align: center; font-size: 0.9em; }
+        body { 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 20px;
+            color: #333;
+            background-color: #f9f9f9;
+        }
+        .receipt-container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            padding: 30px;
+            box-shadow: 0 0 15px rgba(0,0,0,0.1);
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+            padding-bottom: 20px;
+            border-bottom: 2px solid #eee;
+        }
+        .logo {
+            font-size: 24px;
+            font-weight: bold;
+            color: #2c3e50;
+            margin-bottom: 5px;
+        }
+        .receipt-title {
+            font-size: 20px;
+            margin: 10px 0;
+            color: #2c3e50;
+        }
+        .receipt-meta {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        .meta-section {
+            flex: 1;
+            min-width: 250px;
+        }
+        .info-label {
+            font-weight: bold;
+            margin-bottom: 5px;
+            color: #2c3e50;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+        }
+        th, td {
+            padding: 12px 15px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+        }
+        th {
+            background-color: #f2f2f2;
+            font-weight: bold;
+        }
+        .total-row {
+            font-weight: bold;
+            border-top: 2px solid #333;
+        }
+        .footer {
+            margin-top: 30px;
+            text-align: center;
+            font-size: 0.9em;
+            color: #666;
+            padding-top: 20px;
+            border-top: 1px solid #eee;
+        }
+        .signature {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 50px;
+        }
+        .signature-line {
+            width: 200px;
+            border-top: 1px solid #333;
+            text-align: center;
+            padding-top: 5px;
+        }
+        .no-print {
+            text-align: center;
+            margin-top: 30px;
+        }
         @media print {
-            .no-print { display: none; }
-            body { margin: 0; padding: 10px; }
+            body {
+                padding: 0;
+                background: white;
+            }
+            .receipt-container {
+                box-shadow: none;
+                border: none;
+                padding: 0;
+            }
+            .no-print {
+                display: none;
+            }
         }
     </style>
 </head>
 <body>
-    <div class="receipt-body">
+    <div class="receipt-container">
         <div class="header">
-            <h2>BOARDING HOUSE</h2>
-            <h3>PAYMENT RECEIPT</h3>
-            <p>Receipt #: <?= safe($paymentId) ?></p>
-            <p>Date: <?= safe($dates['payment']) ?></p>
+            <div class="logo">BOARDING HOUSE MANAGEMENT SYSTEM</div>
+            <div class="receipt-title">OFFICIAL PAYMENT RECEIPT</div>
+            <div>123 Dormitory Lane, University Town</div>
+            <div>Contact: (123) 456-7890 | billing@boardinghouse.edu</div>
         </div>
         
-        <div class="details">
-            <div class="receipt-row">
-                <div class="receipt-label">Tenant:</div>
-                <div><?= safe($data['tenant']['first_name'] . ' ' . safe($data['tenant']['last_name'])) ?></div>
+        <div class="receipt-meta">
+            <div class="meta-section">
+                <div class="info-label">Tenant Information</div>
+                <div><strong>Name:</strong> <?= safe($payment['first_name'] ?? '') . ' ' . safe($payment['last_name'] ?? '') ?></div>
+                <div><strong>Contact:</strong> <?= safe($payment['mobile_no'] ?? '') ?></div>
             </div>
-            <div class="receipt-row">
-                <div class="receipt-label">Room:</div>
-                <div>Floor <?= safe($data['floor']['floor_no']) ?>, Room <?= safe($data['room']['room_no']) ?>, Bed <?= safe($data['bed']['bed_no']) ?></div>
+            
+            <div class="meta-section">
+                <div class="info-label">Payment Details</div>
+                <div><strong>Receipt #:</strong> <?= safe($paymentId) ?></div>
+                <div><strong>Date:</strong> <?= safe($dates['payment']) ?></div>
+                <div><strong>Method:</strong> <?= safe($payment['method'] ?? '') ?></div>
             </div>
-            <div class="receipt-row">
-                <div class="receipt-label">Amount:</div>
-                <div>₱<?= number_format($data['payment']['payment_amount'], 2) ?></div>
+            
+            <div class="meta-section">
+                <div class="info-label">Accommodation</div>
+                <div><strong>Room:</strong> Floor <?= safe($payment['floor_no'] ?? '') ?>, Room <?= safe($payment['room_no'] ?? '') ?></div>
+                <div><strong>Bed:</strong> #<?= safe($payment['bed_no'] ?? '') ?></div>
+                <div><strong>Period:</strong> <?= safe($dates['start']) ?> 
+                    <?= $dates['due'] ? ' to ' . safe($dates['due']) : '' ?></div>
             </div>
-            <div class="receipt-row">
-                <div class="receipt-label">Method:</div>
-                <div><?= safe($data['payment']['method']) ?></div>
-            </div>
-            <div class="receipt-row">
-                <div class="receipt-label">Period:</div>
-                <div>
-                    <?= safe($dates['start']) ?>
-                    <?php if ($dates['due']): ?>
-                    - <?= safe($dates['due']) ?>
-                    <?php endif; ?>
-                </div>
-            </div>
+        </div>
+        
+        <table>
+            <thead>
+                <tr>
+                    <th>Description</th>
+                    <th>Amount</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>Monthly Rent (Bed #<?= safe($payment['bed_no'] ?? '') ?>)</td>
+                    <td>₱<?= number_format($baseRent, 2) ?></td>
+                </tr>
+                
+                <?php if (!empty($appliances)): ?>
+                    <tr>
+                        <td colspan="2"><strong>Additional Appliances:</strong></td>
+                    </tr>
+                    <?php foreach ($appliances as $appliance): ?>
+                    <tr>
+                        <td><?= safe($appliance) ?></td>
+                        <td>₱100.00</td>
+                    </tr>
+                    <?php endforeach; ?>
+                    <tr>
+                        <td><strong>Total Appliance Charges</strong></td>
+                        <td>₱<?= number_format($applianceCharges, 2) ?></td>
+                    </tr>
+                <?php endif; ?>
+                
+                <tr class="total-row">
+                    <td><strong>TOTAL AMOUNT PAID</strong></td>
+                    <td><strong>₱<?= number_format($totalAmount, 2) ?></strong></td>
+                </tr>
+            </tbody>
+        </table>
+        
+        <div class="signature">
+            <div class="signature-line">Tenant's Signature</div>
+            <div class="signature-line">Landlord</div>
         </div>
         
         <div class="footer">
-            <p>This is an official receipt</p>
+            <p>This is an official receipt. Please keep it for your records.</p>
             <p>Thank you for your payment!</p>
         </div>
     </div>
     
-    <div class="no-print" style="text-align: center; margin-top: 30px;">
-        <button onclick="window.print()" style="padding: 10px 20px; background: #4CAF50; color: white; border: none; cursor: pointer;">
+    <div class="no-print">
+        <button onclick="window.print()" style="
+            padding: 10px 20px;
+            background: #2c3e50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+        ">
             Print Receipt
         </button>
-        <button onclick="window.close()" style="padding: 10px 20px; background: #f44336; color: white; border: none; cursor: pointer; margin-left: 10px;">
+        <button onclick="window.close()" style="
+            padding: 10px 20px;
+            background: #7f8c8d;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-left: 10px;
+            font-size: 16px;
+        ">
             Close Window
         </button>
     </div>
     
     <script>
-        window.onload = function() {
-            setTimeout(function() {
-                window.print();
-            }, 500);
+        // Auto-print only when coming from registration flow
+        if (new URLSearchParams(window.location.search).has('auto_print')) {
+            window.addEventListener('load', function() {
+                setTimeout(function() {
+                    window.print();
+                }, 500);
+            });
         }
+    </script>
+</body>
+</html>

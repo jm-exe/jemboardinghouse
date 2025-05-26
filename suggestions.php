@@ -38,7 +38,9 @@ $suggestionsResult = $stmt->get_result();
   <link rel="stylesheet" href="CSS/styles.css">
 </head>
 <body>
-<?php include 'sidebar.php'; ?>
+<?php 
+  $currentPage = 'suggestions'; 
+  include 'sidebar.php'; ?>
 
 <div class="main-content">
   <div class="container-fluid">

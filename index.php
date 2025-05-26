@@ -9,7 +9,7 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST['login'])) {
     $password = $_POST['Password'];
 
     // JOIN tenants to get tenant_id if role is Tenant
-    $stmt = $conn->prepare("SELECT users.user_id, password, role, tenant_id 
+    $stmt = $conn->prepare("SELECT users.user_id, password, role, tenant_id, is_first_login 
                             FROM users 
                             LEFT JOIN tenants t ON t.user_id = users.user_id 
                             WHERE username = ?");
@@ -18,19 +18,24 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST['login'])) {
     $stmt->store_result();
 
     if ($stmt->num_rows === 1) {
-        $stmt->bind_result($user_id, $hashedPassword, $role, $tenant_id);
+        $stmt->bind_result($user_id, $hashedPassword, $role, $tenant_id, $is_first_login);
         $stmt->fetch();
 
         if (password_verify($password, $hashedPassword)) {
             $_SESSION['username'] = $username;
-            $_SESSION['role'] = $role; // Already set, kept for clarity
+            $_SESSION['role'] = $role;
             $_SESSION['user_id'] = $user_id;
-            $_SESSION['user_role'] = $role; // Added for compatibility with system_config.php
+            $_SESSION['user_role'] = $role;
 
             if ($role === "Tenant") {
                 if ($tenant_id) {
                     $_SESSION['tenant_id'] = $tenant_id;
-                    header("Location: dashboard.php");
+                    // Check if it's the user's first login
+                    if ($is_first_login) {
+                        header("Location: change-credentials.php");
+                    } else {
+                        header("Location: dashboard.php");
+                    }
                 } else {
                     $errorMsg = "Tenant ID not found for this user.";
                 }
@@ -86,12 +91,18 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST['login'])) {
     <div class="left-panel">
       <div class="branding">
         <div class="icon"></div>
-        <h1></h1>
-        <h3></h3>
-        <p></p>
+        <h1 class="welcome">Welcome!</h1>
+        <p>Please log in to your account to manage bookings, view announcements, and access exclusive features. 
+            Enter your username and password to get started. If you’re new here, don’t hesitate to register for an account. 
+            </p>
+        <div class="divider"></div>
+        <p>We’re glad to have you!</p>
+
+        
+        
         <div class="features">
-          <p></p>
-          <p></p>
+          <!-- <p><i class="fa fa-user"></i></p>
+          <p></p> -->
         </div>
       </div>
     </div>
@@ -99,7 +110,10 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST['login'])) {
     <!-- Right Panel -->
     <div class="right-panel">
       <div class="login-container">
-        <img src="Pictures/whitelogo.png" alt="Logo" class="image-class">
+        
+        <img src="Pictures/logo2.png" alt="Logo" class="image-class">
+         <p class="btmlogo" style="margin-top: 0%;">Radyx BoardingHouse</p> <br><br><br><br>
+       
         <form class="login-form" action="" method="post">
           <div class="input-group">
             <label for="Username">Username:</label>

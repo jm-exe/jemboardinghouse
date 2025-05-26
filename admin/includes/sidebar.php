@@ -20,14 +20,16 @@
         </li>
         <li><a href="tenant.php" class="nav-link"><i class="fa fa-users me-2"></i>Tenants</a></li>
         <li><a href="rooms.php" class="nav-link"><i class="fa fa-door-open me-2"></i>Rooms</a></li>
-        <li><a href="payment.php" class="nav-link"><i class="fa fa-dollar me-2"></i>Payments</a></li>
+        <li><a href="payments.php" class="nav-link"><i class="fa fa-dollar me-2"></i>Payments</a></li>
         <li><a href="expenses.php" class="nav-link"><i class="fa fa-bank me-2"></i>Expenses</a></li>
-        <li><a href="suggestions.php" class="nav-link"><i class="bi bi-lightbulb-fill me-2"></i>Suggestions</a></li>
+        <!-- <li><a href="suggestions.php" class="nav-link"><i class="bi bi-lightbulb-fill me-2"></i>Suggestions</a></li> -->
         <li><a href="send-notice.php" class="nav-link"><i class="bi bi-megaphone-fill me-2"></i>Announcement</a></li>
        
         <li><a href="migrate.php" class="nav-link"><i class="fa fa-cog me-2"></i>Migrate Tenants</a></li>
         <li><a href="tenant-history.php" class="nav-link"><i class="fa fa-cog me-2"></i>Tenant History</a></li>
+         <li><a href="printdocument.php" class="nav-link"><i class="fa fa-print me-2"></i>Print Docs</a></li>
          <li><a href="system-management.php" class="nav-link"><i class="fa fa-cog me-2"></i>Settings</a></li>
+        
         <li><a href="../index.php" class="nav-link text-danger"><i class="fa fa-sign-out me-2"></i>Log out</a></li>
       </ul>
     </div>

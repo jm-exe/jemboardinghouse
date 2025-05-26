@@ -1,6 +1,6 @@
 <?php
 
-$conn = mysqli_connect("localhost","root","","boardinghouse") or die("nope");
+$conn = mysqli_connect("localhost","root","","hello") or die("nope");
 
 
 ?>

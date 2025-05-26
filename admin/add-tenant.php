@@ -3,6 +3,7 @@ error_reporting(E_ALL);
 ini_set('display_errors', 1);
 session_start();
 session_regenerate_id(true);
+date_default_timezone_set('Asia/Manila');
 
 require_once '../connection/db.php';
 
@@ -42,6 +43,32 @@ function getAcademicYearId($conn, $yearRange, $semester) {
     $result = $stmt->get_result();
     return $result->fetch_assoc()['academic_year_id'] ?? null;
 }
+
+
+function getSemesterDueDate($start_date) {
+    // Use today's date to determine the semester
+    $today = new DateTime(); // Current date and time (May 24, 2025)
+    $month = $today->format('n'); // Numeric month (1-12)
+    $year = $today->format('Y'); // Current year (2025)
+
+    // Determine the semester based on today's date
+    if ($month >= 8 && $month <= 12) {
+        // First Semester: August to December, ends on December 31
+        return "$year-12-31";
+    } elseif ($month >= 1 && $month <= 5) {
+        // Second Semester: January to May, ends on May 31
+        return "$year-05-31";
+    } elseif ($month >= 6 && $month <= 7) {
+        // Summer: June to July, ends on July 31
+        return "$year-07-31";
+    }
+
+    // Fallback: If today's date is somehow invalid, use the start date's year and default to end of year
+    $start = new DateTime($start_date);
+    $year = $start->format('Y');
+    return "$year-12-31";
+}
+
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (isset($_POST['step1'])) {
@@ -186,28 +213,33 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $tenantStmt->close();
             
             // 4. Assign bed
+            // 4. Assign bed
             $bed_id = $_SESSION['bed_data']['bed_id'];
             $start_date = $_SESSION['bed_data']['start_date'];
-            
+
+            // Calculate due date based on today's date
+            $due_date = getSemesterDueDate($start_date);
+
             // First verify bed is still available
             $checkBed = $conn->query("SELECT status FROM beds WHERE bed_id = $bed_id")->fetch_assoc();
             if (!$checkBed || $checkBed['status'] !== 'Vacant') {
                 throw new Exception("The selected bed is no longer available");
             }
-            
-            // Create boarding record
+
+            // Create boarding record with due date
             $boardingStmt = $conn->prepare("INSERT INTO boarding 
-                                          (tenant_id, bed_id, start_date) 
-                                          VALUES (?, ?, ?)");
-            $boardingStmt->bind_param('iis', 
+                                        (tenant_id, bed_id, start_date, due_date) 
+                                        VALUES (?, ?, ?, ?)");
+            $boardingStmt->bind_param('iiss', 
                 $tenantId,
                 $bed_id,
-                $start_date
+                $start_date,
+                $due_date
             );
             $boardingStmt->execute();
             $boardingId = $conn->insert_id;
             $boardingStmt->close();
-            
+                        
             // 5. Update bed status (with additional safety checks)
             $bedStmt = $conn->prepare("UPDATE beds 
                                       SET status = 'Occupied'
@@ -665,7 +697,10 @@ $showSuccessModal = isset($_GET['success']) && $_GET['success'] == 1;
                                         <?php foreach ($courses as $course): ?>
                                         <option value="<?= $course['course_id'] ?>" 
                                             <?= ($_SESSION['tenant_data']['course_id'] ?? '') == $course['course_id'] ? 'selected' : '' ?>>
-                                            <?= htmlspecialchars($course['course_description']) ?>
+                                            <?php
+                                            echo htmlspecialchars($course['course_description']) . " - " . htmlspecialchars($course['major']);
+                                            ?>
+
                                         </option>
                                         <?php endforeach; ?>
                                     </select>

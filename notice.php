@@ -26,7 +26,9 @@ $announcements = $conn->query($announcementQuery);
 </head>
 <body>
 
-  <?php include 'sidebar.php'; ?>
+  <?php 
+  $currentPage = 'notice'; 
+  include 'sidebar.php'; ?>
 
   <div class="main-content">
     <div class="container-fluid">

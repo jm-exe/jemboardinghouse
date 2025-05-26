@@ -93,18 +93,25 @@ function getMonthOptions($year, $semester) {
     $months = [];
     $monthRanges = [
         'First' => [8, 9, 10, 11, 12], // August to December
-        'Second' => [1, 2, 3, 4, 5],   // January to May
-        'Summer' => [6, 7]             // June to July
+        'Second' => [1, 2, 3, 4, 5],   // January to May (NEXT YEAR)
+        'Summer' => [6, 7]             // June to July (NEXT YEAR)
     ];
-    
+
     $allowedMonths = $monthRanges[$semester] ?? range(1, 12); // Fallback to all months if semester invalid
-    
+
     foreach ($allowedMonths as $month) {
-        $date = sprintf('%04d-%02d-01', $year, $month);
+        if ($semester === 'Second' && $month >= 1 && $month <= 5) {
+            $date = sprintf('%04d-%02d-01', $year + 1, $month); // Next year for 2nd Sem Jan–May
+        } elseif ($semester === 'Summer' && $month >= 6 && $month <= 7) {
+            $date = sprintf('%04d-%02d-01', $year + 1, $month); // Next year for Summer
+        } else {
+            $date = sprintf('%04d-%02d-01', $year, $month);
+        }
         $months[$date] = date('F Y', strtotime($date));
     }
     return $months;
 }
+
 
 // Get months for the current year based on semester
 $monthOptions = getMonthOptions(

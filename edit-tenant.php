@@ -60,7 +60,9 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
   <link rel="stylesheet" href="CSS/styles.css">
 </head>
 <body>
-  <?php include 'sidebar.php'; ?>
+  <?php 
+  $currentPage = 'dashboard'; 
+  include 'sidebar.php'; ?>
 
   <div class="main-content">
     <div class="container" style="margin-left: 280px;">

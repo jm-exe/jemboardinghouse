@@ -35,6 +35,8 @@ require_once '../connection/db.php';
 $search = $_GET['search'] ?? '';
 $selectedYear = $_GET['academic_year_id'] ?? '';
 $tenantType = $_GET['tenant_type'] ?? '';
+$selectedFloor = $_GET['floor_id'] ?? '';
+$selectedRoom = $_GET['room_id'] ?? '';
 $tenants = [];
 
 // Fetch academic years
@@ -47,13 +49,31 @@ if ($ayResult && $ayResult->num_rows > 0) {
     }
 }
 
+// Fetch all floors for filter dropdown
+$floors = $conn->query("SELECT DISTINCT floor_id, floor_no FROM floors ORDER BY floor_no ASC")->fetch_all(MYSQLI_ASSOC);
+
+// Fetch rooms based on selected floor (if any)
+$rooms = [];
+$roomQuery = "SELECT DISTINCT r.room_id, r.room_no 
+              FROM rooms r
+              LEFT JOIN floors f ON r.floor_id = f.floor_id
+              WHERE 1=1";
+
+if (!empty($selectedFloor)) {
+    $roomQuery .= " AND r.floor_id = " . (int)$selectedFloor;
+}
+
+$rooms = $conn->query($roomQuery . " ORDER BY r.room_no ASC")->fetch_all(MYSQLI_ASSOC);
+
 // Build query
 $query = "SELECT t.*, 
           CONCAT(t.last_name, ', ', t.first_name, ' ', COALESCE(t.middle_name, '')) AS full_name,
           c.course_description,
           g.first_name AS guardian_first_name, g.last_name AS guardian_last_name,
           g.mobile_no AS guardian_mobile,
-          b.bed_no, b.deck, b.status as bed_status, r.room_no, f.floor_no,
+          b.bed_no, b.deck, b.status as bed_status, 
+          r.room_no, r.room_id,
+          f.floor_no, f.floor_id,
           a.start_year, a.end_year, a.semester,
           t.student_id
           FROM tenants t
@@ -87,6 +107,18 @@ if (!empty($tenantType)) {
     $query .= " AND t.tenant_type = ?";
     $types .= 's';
     $params[] = $tenantType;
+}
+
+if (!empty($selectedFloor)) {
+    $query .= " AND f.floor_id = ?";
+    $types .= 'i';
+    $params[] = $selectedFloor;
+}
+
+if (!empty($selectedRoom)) {
+    $query .= " AND r.room_id = ?";
+    $types .= 'i';
+    $params[] = $selectedRoom;
 }
 
 $query .= " ORDER BY t.last_name, t.first_name";
@@ -157,6 +189,23 @@ if ($stmt = $conn->prepare($query)) {
         .table-responsive {
             overflow-x: auto;
         }
+        .dropdown-menu .active {
+            background-color: #4361ee;
+            color: white !important;
+        }
+        .dropdown-menu .active:hover {
+            background-color: #3a56d4;
+        }
+        .filter-badge {
+            font-size: 0.75rem;
+        }
+        .add-tenant-btn {
+            white-space: nowrap;
+        }
+        .search-btn {
+            border-top-left-radius: 0;
+            border-bottom-left-radius: 0;
+        }
     </style>
 </head>
 <body>
@@ -176,28 +225,26 @@ if ($stmt = $conn->prepare($query)) {
     <div class="card mb-4">
         <div class="card-body">
             <div class="row g-3 align-items-center">
-                <div class="col-md-5">
-                    <form method="get" class="row g-2">
-                        <div class="col-md-8">
-                            <div class="input-group">
-                                <span class="input-group-text"><i class="bi bi-search"></i></span>
-                                <input type="text" name="search" class="form-control" 
-                                       placeholder="Search tenants..." 
-                                       value="<?= htmlspecialchars($search) ?>">
-                            </div>
-                        </div>
-                        <div class="col-md-4">
-                            <button type="submit" class="btn btn-primary w-100">
-                                <i class="bi bi-search"></i> Search
+                <!-- Search Column - Adjusted -->
+                <div class="col-md-3">
+                    <form method="get" class="d-flex">
+                        <div class="input-group">
+                            <input type="text" name="search" class="form-control" 
+                                   placeholder="Search tenants..." 
+                                   value="<?= htmlspecialchars($search) ?>">
+                            <button type="submit" class="btn btn-primary search-btn">
+                                <i class="bi bi-search"></i>
                             </button>
                         </div>
                     </form>
                 </div>
 
                 <!-- Tenant Type Filter -->
-                <div class="col-md-3">
+                <div class="col-md-2">
                     <form method="get" id="typeFilterForm">
                         <input type="hidden" name="search" value="<?= htmlspecialchars($search) ?>">
+                        <input type="hidden" name="floor_id" value="<?= htmlspecialchars($selectedFloor) ?>">
+                        <input type="hidden" name="room_id" value="<?= htmlspecialchars($selectedRoom) ?>">
                         <select name="tenant_type" class="form-select" onchange="this.form.submit()">
                             <option value="">All Types</option>
                             <option value="Student" <?= $tenantType == 'Student' ? 'selected' : '' ?>>Students</option>
@@ -211,6 +258,8 @@ if ($stmt = $conn->prepare($query)) {
                     <form method="get" id="yearFilterForm">
                         <input type="hidden" name="search" value="<?= htmlspecialchars($search) ?>">
                         <input type="hidden" name="tenant_type" value="<?= htmlspecialchars($tenantType) ?>">
+                        <input type="hidden" name="floor_id" value="<?= htmlspecialchars($selectedFloor) ?>">
+                        <input type="hidden" name="room_id" value="<?= htmlspecialchars($selectedRoom) ?>">
                         <select name="academic_year_id" class="form-select" onchange="this.form.submit()">
                             <option value="">Academic Year</option>
                             <?php foreach ($academicYears as $year): ?>
@@ -222,17 +271,60 @@ if ($stmt = $conn->prepare($query)) {
                     </form>
                 </div>
 
-                <div class="col-md-2 text-end">
-                    <a href="add-tenant.php" class="btn btn-success">
-                        <i class="bi bi-plus-lg"></i> Add Tenant
+                <!-- Floor Filter -->
+                <div class="col-md-2">
+                    <form method="get" id="floorFilterForm">
+                        <input type="hidden" name="search" value="<?= htmlspecialchars($search) ?>">
+                        <input type="hidden" name="tenant_type" value="<?= htmlspecialchars($tenantType) ?>">
+                        <input type="hidden" name="academic_year_id" value="<?= htmlspecialchars($selectedYear) ?>">
+                        <select name="floor_id" class="form-select" onchange="this.form.submit()">
+                            <option value="">All Floors</option>
+                            <?php foreach ($floors as $floor): ?>
+                                <option value="<?= $floor['floor_id'] ?>" <?= $selectedFloor == $floor['floor_id'] ? 'selected' : '' ?>>
+                                    Floor <?= $floor['floor_no'] ?>
+                                </option>
+                            <?php endforeach; ?>
+                        </select>
+                    </form>
+                </div>
+
+                <!-- Room Filter -->
+                <div class="col-md-2">
+                    <form method="get" id="roomFilterForm">
+                        <input type="hidden" name="search" value="<?= htmlspecialchars($search) ?>">
+                        <input type="hidden" name="tenant_type" value="<?= htmlspecialchars($tenantType) ?>">
+                        <input type="hidden" name="academic_year_id" value="<?= htmlspecialchars($selectedYear) ?>">
+                        <input type="hidden" name="floor_id" value="<?= htmlspecialchars($selectedFloor) ?>">
+                        <select name="room_id" class="form-select" onchange="this.form.submit()">
+                            <option value="">All Rooms</option>
+                            <?php foreach ($rooms as $room): ?>
+                                <option value="<?= $room['room_id'] ?>" <?= $selectedRoom == $room['room_id'] ? 'selected' : '' ?>>
+                                    Room <?= $room['room_no'] ?>
+                                </option>
+                            <?php endforeach; ?>
+                        </select>
+                    </form>
+                </div>
+
+                <!-- Add Tenant Button -->
+                <div class="col-md-1">
+                    <a href="add-tenant.php" class="btn btn-success w-100 add-tenant-btn" title="Add New Tenant">
+                        <i class="bi bi-plus-lg"></i> Add
                     </a>
+                </div>
+                
+                <!-- Print Button -->
+                <div class="col-md-1">
+                    <button class="btn btn-info w-100" onclick="printTenants()" title="Print Tenant List">
+                        <i class="bi bi-printer"></i> Print
+                    </button>
                 </div>
             </div>
         </div>
     </div>
 
-    <!-- Status Summary -->
-    <div class="d-flex mb-3 gap-2">
+    <!-- Status Summary and Quick Filters -->
+    <div class="d-flex mb-3 gap-2 flex-wrap">
         <div>
             <span class="badge student-badge">Students: 
                 <?= count(array_filter($tenants, fn($t) => $t['tenant_type'] === 'Student')) ?>
@@ -253,7 +345,36 @@ if ($stmt = $conn->prepare($query)) {
                 <?= count(array_filter($tenants, fn($t) => !isset($t['bed_status']) || $t['bed_status'] === 'Vacant')) ?>
             </span>
         </div>
+    
+        
+        <!-- Clear filters button -->
+        <?php if (!empty($search) || !empty($selectedYear) || !empty($tenantType) || !empty($selectedFloor) || !empty($selectedRoom)): ?>
+        <div>
+            <a href="tenant.php" class="btn btn-sm btn-outline-danger">
+                <i class="bi bi-x-circle"></i> Clear Filters
+            </a>
+        </div>
+        <?php endif; ?>
     </div>
+
+    <!-- Active filters indicator -->
+    <?php if (!empty($selectedFloor) || !empty($selectedRoom)): ?>
+    <div class="mb-3">
+        <small class="text-muted">
+            Currently showing: 
+            <?php if (!empty($selectedFloor)): ?>
+                <span class="badge bg-primary filter-badge">
+                    Floor <?= $floors[array_search($selectedFloor, array_column($floors, 'floor_id'))]['floor_no'] ?>
+                </span>
+            <?php endif; ?>
+            <?php if (!empty($selectedRoom)): ?>
+                <span class="badge bg-secondary filter-badge">
+                    Room <?= $rooms[array_search($selectedRoom, array_column($rooms, 'room_id'))]['room_no'] ?>
+                </span>
+            <?php endif; ?>
+        </small>
+    </div>
+    <?php endif; ?>
 
     <!-- Tenants Table -->
     <div class="card">
@@ -318,7 +439,11 @@ if ($stmt = $conn->prepare($query)) {
                                 <span class="badge <?= $tenant['bed_status'] === 'Occupied' ? 'occupied' : 'vacant' ?> status-badge">
                                     Bed <?= $tenant['bed_no'] ?> (<?= $tenant['deck'] ?>)
                                 </span>
-                                <div class="small">Room <?= $tenant['room_no'] ?>, Floor <?= $tenant['floor_no'] ?></div>
+                                <div class="small">
+                                    <a href="?floor_id=<?= $tenant['floor_id'] ?>&room_id=<?= $tenant['room_id'] ?>" class="text-decoration-none">
+                                        Room <?= $tenant['room_no'] ?>, Floor <?= $tenant['floor_no'] ?>
+                                    </a>
+                                </div>
                                 <?php else: ?>
                                 <span class="badge bg-secondary status-badge">Not Assigned</span>
                                 <?php endif; ?>
@@ -348,6 +473,11 @@ if ($stmt = $conn->prepare($query)) {
                             <td colspan="9" class="text-center text-muted py-4">
                                 <i class="bi bi-people display-6"></i>
                                 <div class="mt-2">No tenants found</div>
+                                <?php if (!empty($search) || !empty($selectedYear) || !empty($tenantType) || !empty($selectedFloor) || !empty($selectedRoom)): ?>
+                                <a href="tenant.php" class="btn btn-sm btn-outline-primary mt-2">
+                                    Clear filters
+                                </a>
+                                <?php endif; ?>
                             </td>
                         </tr>
                         <?php endif; ?>
@@ -371,11 +501,53 @@ function confirmDelete(id, name) {
     return false;
 }
 
+function printTenants() {
+    // Get current filter values
+    const tenantType = document.querySelector('select[name="tenant_type"]').value;
+    const floorId = document.querySelector('select[name="floor_id"]').value;
+    const roomId = document.querySelector('select[name="room_id"]').value;
+    const academicYear = document.querySelector('select[name="academic_year_id"]').value;
+    const searchTerm = document.querySelector('input[name="search"]').value;
+    
+    // Open print window with filters
+    const printUrl = `print-tenants.php?tenant_type=${tenantType}&floor_id=${floorId}&room_id=${roomId}&academic_year_id=${academicYear}&search=${encodeURIComponent(searchTerm)}`;
+    window.open(printUrl, '_blank');
+}
+
 window.onpageshow = function(event) {
     if (event.persisted) {
         window.location.reload();
     }
 };
+
+document.addEventListener('DOMContentLoaded', function() {
+    // Auto-clear room filter when floor changes
+    document.querySelector('select[name="floor_id"]')?.addEventListener('change', function() {
+        document.querySelector('select[name="room_id"]').value = '';
+    });
+    
+    // Highlight current filters in dropdowns
+    const currentFloor = <?= json_encode($selectedFloor) ?>;
+    const currentRoom = <?= json_encode($selectedRoom) ?>;
+    
+    if (currentFloor) {
+        const floorItems = document.querySelectorAll('#floorDropdown + .dropdown-menu a');
+        floorItems.forEach(item => {
+            if (item.getAttribute('href')?.includes(`floor_id=${currentFloor}`)) {
+                item.classList.add('active');
+            }
+        });
+    }
+    
+    if (currentRoom) {
+        const roomItems = document.querySelectorAll('#roomDropdown + .dropdown-menu a');
+        roomItems.forEach(item => {
+            if (item.getAttribute('href')?.includes(`room_id=${currentRoom}`)) {
+                item.classList.add('active');
+            }
+        });
+    }
+});
 </script>
 </body>
 </html>

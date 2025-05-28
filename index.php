@@ -4,6 +4,24 @@ include('connection/db.php');
 
 $errorMsg = "";
 
+// Get business owner info if exists
+$ownerInfo = null;
+$ownerQuery = "SELECT * FROM business_owner LIMIT 1";
+$ownerResult = $conn->query($ownerQuery);
+if ($ownerResult && $ownerResult->num_rows > 0) {
+    $ownerInfo = $ownerResult->fetch_assoc();
+}
+
+// Get business name from settings
+$businessName = "Your BoardingHouse System"; // Default fallback
+$settingsQuery = "SELECT setting_value FROM settings WHERE setting_name = 'business_name'";
+$settingsResult = $conn->query($settingsQuery);
+if ($settingsResult && $settingsResult->num_rows > 0) {
+    $row = $settingsResult->fetch_assoc();
+    $businessName = htmlspecialchars($row['setting_value']);
+}
+
+
 if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST['login'])) {
     $username = $_POST['Username'];
     $password = $_POST['Password'];
@@ -91,14 +109,21 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST['login'])) {
     <div class="left-panel">
       <div class="branding">
         <div class="icon"></div>
-        <h1 class="welcome">Welcome!</h1>
+        <h1 class="welcome">Mabuhay!</h1>
         <p>Please log in to your account to manage bookings, view announcements, and access exclusive features. 
-            Enter your username and password to get started. If you’re new here, don’t hesitate to register for an account. 
+            Enter your username and password to get started. If you're new here, don't hesitate to register for an account. 
             </p>
         <div class="divider"></div>
-        <p>We’re glad to have you!</p>
-
+        <p>We're glad to have you!</p>
         
+        <?php if ($ownerInfo): ?>
+            <p>If you have any questions, feel free to contact the business owner:</p>
+            <p><i class="fas fa-phone"></i> <?php echo htmlspecialchars($ownerInfo['contact_no']); ?></p>
+            <?php if (!empty($ownerInfo['address'])): ?>
+                <p><i class="fas fa-map-marker-alt"></i> <?php echo htmlspecialchars($ownerInfo['address']); ?></p>
+            <?php endif; ?>
+        <?php endif; ?>
+
         
         <div class="features">
           <!-- <p><i class="fa fa-user"></i></p>
@@ -112,7 +137,7 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST['login'])) {
       <div class="login-container">
         
         <img src="Pictures/logo2.png" alt="Logo" class="image-class">
-         <p class="btmlogo" style="margin-top: 0%;">Radyx BoardingHouse</p> <br><br><br><br>
+         <p class="btmlogo" style="margin-top: 0%;"><?php echo $businessName; ?></p> <br><br><br><br>
        
         <form class="login-form" action="" method="post">
           <div class="input-group">
@@ -131,7 +156,8 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST['login'])) {
 
           <button type="submit" name="login">Login</button>
 
-          <p class="signup-link">Don't have an account? <span>Contact admin</span></p>
+          
+
         </form>
       </div>
     </div>

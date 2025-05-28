@@ -45,26 +45,15 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST['update_credentials'])
         if ($stmt->num_rows > 0) {
             $errorMsg = "Username already taken.";
         } else {
-            // Update username, password, and optionally is_first_login
+            // Update username, password, and is_first_login
             $hashed_new_password = password_hash($new_password, PASSWORD_BCRYPT);
-            $update_query = "UPDATE users SET username = ?, password = ?";
-            $update_params = [$new_username, $hashed_new_password];
-            $param_types = "ss";
-
-            if ($is_first_login) {
-                $update_query .= ", is_first_login = 0";
-            }
-            $update_query .= " WHERE user_id = ?";
-            $update_params[] = $user_id;
-            $param_types .= "i";
-
+            $update_query = "UPDATE users SET username = ?, password = ?, is_first_login = 0 WHERE user_id = ?";
             $stmt = $conn->prepare($update_query);
-            $stmt->bind_param($param_types, ...$update_params);
+            $stmt->bind_param("ssi", $new_username, $hashed_new_password, $user_id);
 
             if ($stmt->execute()) {
-                $_SESSION['username'] = $new_username; // Update session with new username
+                $_SESSION['username'] = $new_username;
                 $successMessage = "Credentials updated successfully! You will be redirected to the dashboard.";
-                // Redirect to dashboard after a short delay
                 header("refresh:3;url=dashboard.php");
             } else {
                 $errorMsg = "Failed to update credentials. Please try again.";
@@ -99,17 +88,27 @@ $conn->close();
             margin-top: 10px;
             margin-bottom: 10px;
         }
-        h4{
-          color: royalblue;
-          margin: auto;
-          padding: 0%;
+        h4 {
+            color: royalblue;
+            margin: auto;
+            padding: 0;
+        }
+        /* Disable sidebar interaction */
+        .sidebar.disabled {
+            pointer-events: none;
+            opacity: 0.6;
+        }
+        /* Modal backdrop customization */
+        .modal-backdrop {
+            background-color: rgba(0, 0, 0, 0.8);
         }
     </style>
 </head>
 <body>
-   <?php 
-  $currentPage = 'credentials'; 
-  include 'sidebar.php'; ?>
+    <?php 
+    $currentPage = 'credentials'; 
+    include 'sidebar.php'; 
+    ?>
 
     <div class="main-content">
         <div class="container-fluid">
@@ -160,6 +159,49 @@ $conn->close();
         </div>
     </div>
 
+    <!-- Modal for first-time login alert -->
+    <?php if ($is_first_login): ?>
+    <div class="modal fade" id="firstLoginModal" tabindex="-1" aria-labelledby="firstLoginModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="firstLoginModalLabel">First-Time Login</h5>
+                </div>
+                <div class="modal-body">
+                    <p class="text-danger">For security reasons, you must change your default credentials before accessing the system.</p>
+                    <p>Please update your username and password below.</p>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-primary" data-bs-dismiss="modal">OK</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    <?php endif; ?>
+
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        <?php if ($is_first_login): ?>
+        // Show modal on first login
+        document.addEventListener('DOMContentLoaded', function() {
+            var firstLoginModal = new bootstrap.Modal(document.getElementById('firstLoginModal'), {
+                backdrop: 'static',
+                keyboard: false
+            });
+            firstLoginModal.show();
+
+            // Disable sidebar
+            document.querySelector('.sidebar').classList.add('disabled');
+
+            // Prevent sidebar navigation
+            document.querySelectorAll('.sidebar a').forEach(link => {
+                link.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    alert('Please update your credentials before accessing other pages.');
+                });
+            });
+        });
+        <?php endif; ?>
+    </script>
 </body>
 </html>

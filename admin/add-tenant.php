@@ -34,7 +34,6 @@ function generateUsername($firstName, $lastName) {
     return $baseUsername . $randomNumber;
 }
 
-
 function getAcademicYearId($conn, $yearRange, $semester) {
     [$start_year, $end_year] = explode('-', $yearRange);
     $stmt = $conn->prepare("SELECT academic_year_id FROM academic_years WHERE start_year = ? AND end_year = ? AND semester = ?");
@@ -44,12 +43,11 @@ function getAcademicYearId($conn, $yearRange, $semester) {
     return $result->fetch_assoc()['academic_year_id'] ?? null;
 }
 
-
 function getSemesterDueDate($start_date) {
     // Use today's date to determine the semester
-    $today = new DateTime(); // Current date and time (May 24, 2025)
+    $today = new DateTime(); // Current date and time
     $month = $today->format('n'); // Numeric month (1-12)
-    $year = $today->format('Y'); // Current year (2025)
+    $year = $today->format('Y'); // Current year
 
     // Determine the semester based on today's date
     if ($month >= 8 && $month <= 12) {
@@ -68,7 +66,6 @@ function getSemesterDueDate($start_date) {
     $year = $start->format('Y');
     return "$year-12-31";
 }
-
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (isset($_POST['step1'])) {
@@ -133,7 +130,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $conn->begin_transaction();
         
         try {
-            // 1. Save guardian first
+            // 1. Save guardian
             $guardianStmt = $conn->prepare("INSERT INTO guardians 
                                          (last_name, first_name, middle_name, mobile_no, relationship) 
                                          VALUES (?, ?, ?, ?, ?)");
@@ -213,7 +210,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $tenantStmt->close();
             
             // 4. Assign bed
-            // 4. Assign bed
             $bed_id = $_SESSION['bed_data']['bed_id'];
             $start_date = $_SESSION['bed_data']['start_date'];
 
@@ -221,7 +217,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $due_date = getSemesterDueDate($start_date);
 
             // First verify bed is still available
-            $checkBed = $conn->query("SELECT status FROM beds WHERE bed_id = $bed_id")->fetch_assoc();
+            $checkBed = $conn->query("SELECT status, monthly_rent FROM beds WHERE bed_id = $bed_id")->fetch_assoc();
             if (!$checkBed || $checkBed['status'] !== 'Vacant') {
                 throw new Exception("The selected bed is no longer available");
             }
@@ -240,7 +236,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $boardingId = $conn->insert_id;
             $boardingStmt->close();
                         
-            // 5. Update bed status (with additional safety checks)
+            // 5. Update bed status
             $bedStmt = $conn->prepare("UPDATE beds 
                                       SET status = 'Occupied'
                                       WHERE bed_id = ? 
@@ -254,10 +250,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $bedStmt->close();
             
             // 6. Process payment
-            $amount_tendered = $_POST['amount_tendered'];
-            $payment_method = $_POST['payment_method'] ?? 'Cash';
+            $base_rent = $checkBed['monthly_rent'] ?? 1100;
             $appliance_total = $_POST['appliance_total'] ?? 0;
+            $total_amount_due = $base_rent + $appliance_total;
+            $amount_tendered = !empty($_POST['amount_tendered']) ? floatval($_POST['amount_tendered']) : $total_amount_due;
+            $payment_method = $_POST['payment_method'] ?? 'Cash';
             $appliances = isset($_POST['appliances']) ? implode(', ', $_POST['appliances']) : 'None';
+
+            // Validate amount tendered
+            if ($amount_tendered < $total_amount_due) {
+                throw new Exception("Amount tendered (₱" . number_format($amount_tendered, 2) . ") is less than the total amount due (₱" . number_format($total_amount_due, 2) . ")");
+            }
 
             $paymentStmt = $conn->prepare("INSERT INTO payments 
                                         (user_id, boarding_id, payment_amount, appliance_charges, appliances, payment_date, method) 
@@ -293,7 +296,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             // Clear temporary files
             if (!empty($_SESSION['tenant_data']['profile_picture']) && 
                 strpos($_SESSION['tenant_data']['profile_picture'], 'temp_') === 0) {
-                $tempFile = '../uploads/profiles/' . $_SESSION['tenant_data']['profile_picture'];
+                $tempFile = '../Uploads/profiles/' . $_SESSION['tenant_data']['profile_picture'];
                 if (file_exists($tempFile)) {
                     unlink($tempFile);
                 }
@@ -312,7 +315,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } catch (Exception $e) {
             if (!empty($_SESSION['tenant_data']['profile_picture']) && 
                 strpos($_SESSION['tenant_data']['profile_picture'], 'temp_') === 0) {
-                $tempFile = '../uploads/profiles/' . $_SESSION['tenant_data']['profile_picture'];
+                $tempFile = '../Uploads/profiles/' . $_SESSION['tenant_data']['profile_picture'];
                 if (file_exists($tempFile)) {
                     unlink($tempFile);
                 }
@@ -345,7 +348,7 @@ if ($current_step >= 3) {
             $roomNo = $room['room_no'];
             $bedOptions[$floorNo][$roomNo] = [];
             
-            // Get ALL beds for this room (including occupied ones)
+            // Get ALL beds for this room
             $beds = $conn->query("
                 SELECT b.* 
                 FROM beds b
@@ -361,6 +364,14 @@ if ($current_step >= 3) {
             }
         }
     }
+}
+
+// Fetch selected bed details for step 5
+$selected_bed = null;
+if ($current_step == 5 && isset($_SESSION['bed_data']['bed_id'])) {
+    $bed_id = $_SESSION['bed_data']['bed_id'];
+    $result = $conn->query("SELECT * FROM beds WHERE bed_id = $bed_id");
+    $selected_bed = $result->fetch_assoc();
 }
 
 // Check for success parameter
@@ -554,7 +565,6 @@ $showSuccessModal = isset($_GET['success']) && $_GET['success'] == 1;
             transition: all 0.3s ease;
             overflow: hidden;
         }
-
         
         .credentials-box {
             background-color: #f8f9fa;
@@ -627,7 +637,6 @@ $showSuccessModal = isset($_GET['success']) && $_GET['success'] == 1;
                 <?php if ($current_step == 1): ?>
                 <div class="card-header">Personal Information</div>
                 <div class="card-body">
-
                     <div class="row g-3">
                         <div class="col-md-6">
                             <div class="mb-3">
@@ -697,10 +706,7 @@ $showSuccessModal = isset($_GET['success']) && $_GET['success'] == 1;
                                         <?php foreach ($courses as $course): ?>
                                         <option value="<?= $course['course_id'] ?>" 
                                             <?= ($_SESSION['tenant_data']['course_id'] ?? '') == $course['course_id'] ? 'selected' : '' ?>>
-                                            <?php
-                                            echo htmlspecialchars($course['course_description']) . " - " . htmlspecialchars($course['major']);
-                                            ?>
-
+                                            <?= htmlspecialchars($course['course_description']) . " - " . htmlspecialchars($course['major']) ?>
                                         </option>
                                         <?php endforeach; ?>
                                     </select>
@@ -725,7 +731,6 @@ $showSuccessModal = isset($_GET['success']) && $_GET['success'] == 1;
                                     <select name="academic_year" class="form-select" id="academicYearSelect" required>
                                         <option value="">Select Academic Year</option>
                                         <?php 
-                                        // Get unique academic years
                                         $uniqueYears = [];
                                         foreach ($academicYears as $year) {
                                             $yearRange = $year['start_year'] . '-' . $year['end_year'];
@@ -748,7 +753,6 @@ $showSuccessModal = isset($_GET['success']) && $_GET['success'] == 1;
                                     <select name="semester" class="form-select" id="semesterSelect" required>
                                         <option value="">Select Semester</option>
                                         <?php 
-                                        // Get unique semesters
                                         $uniqueSemesters = [];
                                         foreach ($academicYears as $year) {
                                             if (!in_array($year['semester'], $uniqueSemesters)) {
@@ -826,7 +830,8 @@ $showSuccessModal = isset($_GET['success']) && $_GET['success'] == 1;
                         </button>
                         <button type="submit" name="step2" class="btn btn-primary">
                             Next <i class="bi bi-arrow-right"></i>
-                                            </div>
+                        </button>
+                    </div>
                 </div>
                 <?php endif; ?>
                 
@@ -900,7 +905,6 @@ $showSuccessModal = isset($_GET['success']) && $_GET['success'] == 1;
                 <div class="card-body">
                     <div class="terms-container">
                         <h5 class="mb-3">CONTRACT OF TENANCY</h5>
-                                        
                         <h6>Rent and Payment Schedule</h6>
                         <ul>
                             <li>The monthly rental rate is <strong>₱1,100.00</strong></li>
@@ -958,7 +962,7 @@ $showSuccessModal = isset($_GET['success']) && $_GET['success'] == 1;
                                 <div class="card-body">
                                     <div class="d-flex justify-content-between mb-2">
                                         <span>Monthly Rent:</span>
-                                        <span>₱<?= number_format($beds[0]['monthly_rent'] ?? 1100, 2) ?></span>
+                                        <span>₱<?= number_format($selected_bed['monthly_rent'] ?? 1100, 2) ?></span>
                                     </div>
                                     
                                     <!-- Appliance Charges Section -->
@@ -1011,7 +1015,7 @@ $showSuccessModal = isset($_GET['success']) && $_GET['success'] == 1;
                                     <hr>
                                     <div class="d-flex justify-content-between fw-bold">
                                         <span>Total Amount Due:</span>
-                                        <span id="totalAmount">₱<?= number_format($beds[0]['monthly_rent'] ?? 1100, 2) ?></span>
+                                        <span id="totalAmount">₱<?= number_format($selected_bed['monthly_rent'] ?? 1100, 2) ?></span>
                                     </div>
                                 </div>
                             </div>
@@ -1050,9 +1054,15 @@ $showSuccessModal = isset($_GET['success']) && $_GET['success'] == 1;
                                         <label class="form-label">Amount Tendered *</label>
                                         <input type="number" step="0.01" name="amount_tendered" 
                                             class="form-control" required
-                                            min="<?= $beds[0]['monthly_rent'] ?? 1100 ?>" 
-                                            id="amountTendered">
+                                            id="amountTendered"
+                                            placeholder="Enter amount...">
+                                        <small class="text-primary">Leave this field empty to automatically use the total amount due.</small>
+
+                                        <div class="invalid-feedback">
+                                            Amount tendered must be at greater or equal to <strong>total amount due</strong>
+                                        </div>
                                     </div>
+
                                 </div>
                             </div>
                         </div>
@@ -1075,226 +1085,250 @@ $showSuccessModal = isset($_GET['success']) && $_GET['success'] == 1;
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 <script>
-    document.addEventListener('DOMContentLoaded', function() {
+document.addEventListener('DOMContentLoaded', function() {
+    // Appliance charges calculation
+    document.querySelectorAll('.appliance-check').forEach(checkbox => {
+        checkbox.addEventListener('change', updateCharges);
+    });
 
-        // Appliance charges calculation
-        document.querySelectorAll('.appliance-check').forEach(checkbox => {
-            checkbox.addEventListener('change', updateCharges);
-        });
-
-        function updateCharges() {
-            const baseRent = <?= $beds[0]['monthly_rent'] ?? 1100 ?>;
-            const appliancePrice = 100; // Each appliance costs ₱100
-            const checkedAppliances = document.querySelectorAll('.appliance-check:checked');
-            const applianceCount = checkedAppliances.length;
-            const applianceTotal = applianceCount * appliancePrice;
-            const totalAmount = baseRent + applianceTotal;
-            
-            // Update display
-            document.getElementById('applianceCharges').textContent = `₱${applianceTotal.toFixed(2)}`;
-            document.getElementById('totalAmount').textContent = `₱${totalAmount.toFixed(2)}`;
-            
-            // Update hidden field for form submission
-            document.getElementById('applianceTotal').value = applianceTotal;
-            
-            // Update minimum payment amount
-            document.getElementById('amountTendered').min = totalAmount;
-        }
-
-        // Handle student/non-student toggle
-        const isStudentSelect = document.getElementById('isStudentSelect');
-        const studentFields = document.getElementById('studentFields');
+    function updateCharges() {
+        const baseRent = <?= $selected_bed['monthly_rent'] ?? 1100 ?>;
+        const appliancePrice = 100; // Each appliance costs ₱100
+        const checkedAppliances = document.querySelectorAll('.appliance-check:checked');
+        const applianceCount = checkedAppliances.length;
+        const applianceTotal = applianceCount * appliancePrice;
+        const totalAmount = baseRent + applianceTotal;
         
-        if (isStudentSelect && studentFields) {
-            function toggleStudentFields() {
-                const isStudent = isStudentSelect.value === '1';
-                studentFields.style.display = isStudent ? 'block' : 'none';
-                
-                // Toggle required attribute for student fields
-                document.querySelectorAll('#studentFields select, #studentFields input').forEach(function(field) {
-                    field.required = isStudent;
-                });
-            }
+        // Update display
+        document.getElementById('applianceCharges').textContent = `₱${applianceTotal.toFixed(2)}`;
+        document.getElementById('totalAmount').textContent = `₱${totalAmount.toFixed(2)}`;
+        
+        // Update hidden field for form submission
+        document.getElementById('applianceTotal').value = applianceTotal;
+        
+        // Update minimum payment amount and placeholder
+        const amountTenderedInput = document.getElementById('amountTendered');
+        amountTenderedInput.min = totalAmount;
+        document.getElementById('placeholderTotal').textContent = totalAmount.toFixed(2);
+        document.getElementById('minAmount').textContent = totalAmount.toFixed(2);
+    }
+
+    // Handle student/non-student toggle
+    const isStudentSelect = document.getElementById('isStudentSelect');
+    const studentFields = document.getElementById('studentFields');
+    
+    if (isStudentSelect && studentFields) {
+        function toggleStudentFields() {
+            const isStudent = isStudentSelect.value === '1';
+            studentFields.style.display = isStudent ? 'block' : 'none';
             
-            // Initialize and add event listener
-            toggleStudentFields();
-            isStudentSelect.addEventListener('change', toggleStudentFields);
-        }
-
-        <?php if ($current_step == 3 && !empty($floors)): ?>
-        // Bed selection functionality
-        const bedOptions = <?= json_encode($bedOptions) ?>;
-        let selectedFloor = null;
-        let selectedRoom = null;
-        let selectedBed = null;
-
-        // Floor selection
-        document.querySelectorAll('.floor-btn').forEach(btn => {
-            btn.addEventListener('click', function() {
-                selectedFloor = this.dataset.floor;
-                selectedRoom = null;
-                selectedBed = null;
-                
-                // Update UI
-                document.querySelectorAll('.floor-btn').forEach(b => b.classList.remove('active'));
-                this.classList.add('active');
-                
-                // Show rooms for this floor
-                const roomButtonsContainer = document.getElementById('roomButtons');
-                roomButtonsContainer.innerHTML = '';
-                
-                const rooms = bedOptions[selectedFloor];
-                
-                for (const roomNo in rooms) {
-                    const roomBtn = document.createElement('button');
-                    roomBtn.type = 'button';
-                    roomBtn.className = 'btn btn-outline-secondary room-btn';
-                    roomBtn.dataset.room = roomNo;
-                    roomBtn.textContent = `Room ${roomNo}`;
-                    roomBtn.addEventListener('click', () => selectRoom(roomNo));
-                    roomButtonsContainer.appendChild(roomBtn);
-                }
-                
-                // Show room selection section
-                document.getElementById('roomSelection').style.display = 'block';
-                document.getElementById('bedSelection').style.display = 'none';
-                document.getElementById('selectedBedInfo').style.display = 'none';
+            // Toggle required attribute for student fields
+            document.querySelectorAll('#studentFields select, #studentFields input').forEach(function(field) {
+                field.required = isStudent;
             });
-        });
+        }
+        
+        // Initialize and add event listener
+        toggleStudentFields();
+        isStudentSelect.addEventListener('change', toggleStudentFields);
+    }
 
-        // Room selection
-        function selectRoom(roomNo) {
-            selectedRoom = roomNo;
+    <?php if ($current_step == 3 && !empty($floors)): ?>
+    // Bed selection functionality
+    const bedOptions = <?= json_encode($bedOptions) ?>;
+    let selectedFloor = null;
+    let selectedRoom = null;
+    let selectedBed = null;
+
+    // Floor selection
+    document.querySelectorAll('.floor-btn').forEach(btn => {
+        btn.addEventListener('click', function() {
+            selectedFloor = this.dataset.floor;
+            selectedRoom = null;
             selectedBed = null;
             
-            // Update UI - highlight selected room button
-            document.querySelectorAll('.room-btn').forEach(b => b.classList.remove('active'));
-            document.querySelector(`.room-btn[data-room="${roomNo}"]`).classList.add('active');
+            // Update UI
+            document.querySelectorAll('.floor-btn').forEach(b => b.classList.remove('active'));
+            this.classList.add('active');
             
-            // Show beds for this room
-            const bedCardsContainer = document.getElementById('bedCards');
-            bedCardsContainer.innerHTML = '';
+            // Show rooms for this floor
+            const roomButtonsContainer = document.getElementById('roomButtons');
+            roomButtonsContainer.innerHTML = '';
             
-            const beds = bedOptions[selectedFloor][selectedRoom];
+            const rooms = bedOptions[selectedFloor];
             
-            if (beds?.length > 0) {
-                beds.forEach(bed => {
-                    const isVacant = bed.status === 'Vacant';
-                    const statusClass = isVacant ? 'vacant' : 'occupied';
-                    const statusBadge = isVacant ? 'bg-success' : 'bg-danger';
-                    
-                    const bedCard = document.createElement('div');
-                    bedCard.className = 'col-md-4 mb-3';
-                    bedCard.innerHTML = `
-                        <div class="card bed-card ${statusClass}" 
-                            data-bed-id="${bed.bed_id}"
-                            data-status="${bed.status}">
-                            <div class="card-body">
-                                <h5 class="card-title">Bed ${bed.bed_no}</h5>
-                                <p class="card-text">
-                                    Floor ${bed.floor_no}, Room ${bed.room_no}<br>
-                                    Deck: ${bed.deck}<br>
-                                    Status: <span class="badge ${statusBadge}">${bed.status}</span><br>
-                                    Rent: ₱${parseFloat(bed.monthly_rent).toFixed(2)}
-                                </p>
-                            </div>
-                        </div>
-                    `;
-                    
-                    // Only make vacant beds clickable
-                    if (isVacant) {
-                        bedCard.querySelector('.bed-card').addEventListener('click', () => selectBed(bed.bed_id));
-                    }
-                    
-                    bedCardsContainer.appendChild(bedCard);
-                });
-            } else {
-                bedCardsContainer.innerHTML = '<div class="col-12"><div class="alert alert-warning">No beds in this room</div></div>';
+            for (const roomNo in rooms) {
+                const roomBtn = document.createElement('button');
+                roomBtn.type = 'button';
+                roomBtn.className = 'btn btn-outline-secondary room-btn';
+                roomBtn.dataset.room = roomNo;
+                roomBtn.textContent = `Room ${roomNo}`;
+                roomBtn.addEventListener('click', () => selectRoom(roomNo));
+                roomButtonsContainer.appendChild(roomBtn);
             }
             
-            document.getElementById('bedSelection').style.display = 'block';
+            // Show room selection section
+            document.getElementById('roomSelection').style.display = 'block';
+            document.getElementById('bedSelection').style.display = 'none';
             document.getElementById('selectedBedInfo').style.display = 'none';
-        }
-
-        // Bed selection
-        function selectBed(bedId) {
-            selectedBed = bedId;
-            
-            // Find the bed data
-            const beds = bedOptions[selectedFloor][selectedRoom];
-            const bedData = beds.find(b => b.bed_id == bedId);
-            
-            if (!bedData) return;
-            
-            // Update UI - highlight selected bed
-            document.querySelectorAll('.bed-card').forEach(card => {
-                card.classList.remove('selected');
-                card.style.border = '';
-            });
-            
-            const selectedCard = document.querySelector(`.bed-card[data-bed-id="${bedId}"]`);
-            selectedCard.classList.add('selected');
-            selectedCard.style.border = '2px solid var(--primary-color)';
-            
-            // Update hidden input and display
-            document.getElementById('bedIdInput').value = bedId;
-            document.getElementById('selectedBedText').textContent = 
-                `Bed ${bedData.bed_no} (Floor ${bedData.floor_no}, Room ${bedData.room_no}) - ₱${parseFloat(bedData.monthly_rent).toFixed(2)}`;
-            document.getElementById('selectedBedInfo').style.display = 'block';
-        }
-        <?php endif; ?>
-
-        // Form submission handling
-        const form = document.getElementById('tenantForm');
-        if (form) {
-            form.addEventListener('submit', function(e) {
-                const submitter = e.submitter;
-                
-                if (!submitter) {
-                    e.preventDefault();
-                    return false;
-                }
-                
-                // Handle step3 (bed selection) validation
-                if (submitter.name === 'step3') {
-                    <?php if ($current_step == 3): ?>
-                    if (!selectedBed) {
-                        e.preventDefault();
-                        alert('Please select a bed before proceeding');
-                        return false;
-                    }
-                    
-                    const selectedBedElement = document.querySelector(`.bed-card[data-bed-id="${selectedBed}"]`);
-                    if (selectedBedElement?.dataset.status === 'Occupied') {
-                        e.preventDefault();
-                        alert('Cannot select an occupied bed. Please choose a vacant bed.');
-                        return false;
-                    }
-                    <?php endif; ?>
-                }
-                
-                // Only allow our navigation buttons to submit
-                if (submitter.name !== 'prev_step' && 
-                    !submitter.name.startsWith('step') && 
-                    submitter.name !== 'complete') {
-                    e.preventDefault();
-                    return false;
-                }
-            });
-        }
-
-        <?php if (isset($showSuccessModal) && $showSuccessModal): ?>
-        // Success modal handling
-        const successModal = new bootstrap.Modal(document.getElementById('successModal'));
-        successModal.show();
-        
-        // Prevent closing by clicking backdrop or pressing escape
-        successModal._element.addEventListener('hide.bs.modal', function(event) {
-            event.preventDefault();
-            return false;
         });
-        <?php endif; ?>
     });
+
+    // Room selection
+    function selectRoom(roomNo) {
+        selectedRoom = roomNo;
+        selectedBed = null;
+        
+        // Update UI
+        document.querySelectorAll('.room-btn').forEach(b => b.classList.remove('active'));
+        document.querySelector(`.room-btn[data-room="${roomNo}"]`).classList.add('active');
+        
+        // Show beds for this room
+        const bedCardsContainer = document.getElementById('bedCards');
+        bedCardsContainer.innerHTML = '';
+        
+        const beds = bedOptions[selectedFloor][selectedRoom];
+        
+        if (beds?.length > 0) {
+            beds.forEach(bed => {
+                const isVacant = bed.status === 'Vacant';
+                const statusClass = isVacant ? 'vacant' : 'occupied';
+                const statusBadge = isVacant ? 'bg-success' : 'bg-danger';
+                
+                const bedCard = document.createElement('div');
+                bedCard.className = 'col-md-4 mb-3';
+                bedCard.innerHTML = `
+                    <div class="card bed-card ${statusClass}" 
+                        data-bed-id="${bed.bed_id}"
+                        data-status="${bed.status}">
+                        <div class="card-body">
+                            <h5 class="card-title">Bed ${bed.bed_no}</h5>
+                            <p class="card-text">
+                                Floor ${bed.floor_no}, Room ${bed.room_no}<br>
+                                Deck: ${bed.deck}<br>
+                                Status: <span class="badge ${statusBadge}">${bed.status}</span><br>
+                                Rent: ₱${parseFloat(bed.monthly_rent).toFixed(2)}
+                            </p>
+                        </div>
+                    </div>
+                `;
+                
+                // Only make vacant beds clickable
+                if (isVacant) {
+                    bedCard.querySelector('.bed-card').addEventListener('click', () => selectBed(bed.bed_id));
+                }
+                
+                bedCardsContainer.appendChild(bedCard);
+            });
+        } else {
+            bedCardsContainer.innerHTML = '<div class="col-12"><div class="alert alert-warning">No beds in this room</div></div>';
+        }
+        
+        document.getElementById('bedSelection').style.display = 'block';
+        document.getElementById('selectedBedInfo').style.display = 'none';
+    }
+
+    // Bed selection
+    function selectBed(bedId) {
+        selectedBed = bedId;
+        
+        // Find the bed data
+        const beds = bedOptions[selectedFloor][selectedRoom];
+        const bedData = beds.find(b => b.bed_id == bedId);
+        
+        if (!bedData) return;
+        
+        // Update UI
+        document.querySelectorAll('.bed-card').forEach(card => {
+            card.classList.remove('selected');
+            card.style.border = '';
+        });
+        
+        const selectedCard = document.querySelector(`.bed-card[data-bed-id="${bedId}"]`);
+        selectedCard.classList.add('selected');
+        selectedCard.style.border = '2px solid var(--primary-color)';
+        
+        // Update hidden input and display
+        document.getElementById('bedIdInput').value = bedId;
+        document.getElementById('selectedBedText').textContent = 
+            `Bed ${bedData.bed_no} (Floor ${bedData.floor_no}, Room ${bedData.room_no}) - ₱${parseFloat(bedData.monthly_rent).toFixed(2)}`;
+        document.getElementById('selectedBedInfo').style.display = 'block';
+    }
+    <?php endif; ?>
+
+    // Form submission handling
+    const form = document.getElementById('tenantForm');
+    if (form) {
+        form.addEventListener('submit', function(e) {
+            const submitter = e.submitter;
+            
+            if (!submitter) {
+                e.preventDefault();
+                return false;
+            }
+            
+            // Handle step5 (payment) validation
+            if (submitter.name === 'complete') {
+                const amountTenderedInput = document.getElementById('amountTendered');
+                const baseRent = <?= $selected_bed['monthly_rent'] ?? 1100 ?>;
+                const applianceTotal = parseFloat(document.getElementById('applianceTotal').value) || 0;
+                const totalAmountDue = baseRent + applianceTotal;
+                const amountTendered = amountTenderedInput.value ? parseFloat(amountTenderedInput.value) : totalAmountDue;
+
+                if (amountTendered < totalAmountDue) {
+                    e.preventDefault();
+                    amountTenderedInput.classList.add('is-invalid');
+                    alert(`Amount tendered (₱${amountTendered.toFixed(2)}) must be at least ₱${totalAmountDue.toFixed(2)}`);
+                    return false;
+                } else {
+                    amountTenderedInput.classList.remove('is-invalid');
+                    // If amount is empty, set it to total amount due
+                    if (!amountTenderedInput.value) {
+                        amountTenderedInput.value = totalAmountDue;
+                    }
+                }
+            }
+            
+            // Handle step3 (bed selection) validation
+            if (submitter.name === 'step3') {
+                <?php if ($current_step == 3): ?>
+                if (!selectedBed) {
+                    e.preventDefault();
+                    alert('Please select a bed before proceeding');
+                    return false;
+                }
+                
+                const selectedBedElement = document.querySelector(`.bed-card[data-bed-id="${selectedBed}"]`);
+                if (selectedBedElement?.dataset.status === 'Occupied') {
+                    e.preventDefault();
+                    alert('Cannot select an occupied bed. Please choose a vacant bed.');
+                    return false;
+                }
+                <?php endif; ?>
+            }
+            
+            // Only allow navigation buttons to submit
+            if (submitter.name !== 'prev_step' && 
+                !submitter.name.startsWith('step') && 
+                submitter.name !== 'complete') {
+                e.preventDefault();
+                return false;
+            }
+        });
+    }
+
+    <?php if (isset($showSuccessModal) && $showSuccessModal): ?>
+    // Success modal handling
+    const successModal = new bootstrap.Modal(document.getElementById('successModal'));
+    successModal.show();
+    
+    // Prevent closing by clicking backdrop or pressing escape
+    successModal._element.addEventListener('hide.bs.modal', function(event) {
+        event.preventDefault();
+        return false;
+    });
+    <?php endif; ?>
+});
 </script>
 
 <!-- Success Modal -->
@@ -1317,7 +1351,6 @@ $showSuccessModal = isset($_GET['success']) && $_GET['success'] == 1;
                     </div>
                 </div>
                 <?php 
-                // Clear the credentials after displaying them
                 unset($_SESSION['new_tenant_credentials']);
                 endif; ?>
                 

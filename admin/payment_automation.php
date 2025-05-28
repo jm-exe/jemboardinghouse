@@ -51,6 +51,20 @@ function generateMonthlyPayment($conn, $boarding, $currentMonth, $academicYearId
     }
     $appliancesStr = implode(', ', $applianceList);
 
+    // Get guest stay charges
+    $guestStmt = $conn->prepare("
+        SELECT SUM(charge) as total_guest_charges
+        FROM guest_stays
+        WHERE tenant_id = ? AND YEAR(stay_date) = ? AND MONTH(stay_date) = ? AND academic_year_id = ?
+    ");
+    $year = $currentMonth->format('Y');
+    $month = $currentMonth->format('m');
+    $guestStmt->bind_param('iiii', $tenantId, $year, $month, $academicYearId);
+    $guestStmt->execute();
+    $guestResult = $guestStmt->get_result()->fetch_assoc();
+    $guestCharges = (float)($guestResult['total_guest_charges'] ?? 0.00);
+    $guestStmt->close();
+
     // Calculate utility surcharges
     $utilitySurcharge = 0.00;
     $expenseStmt = $conn->prepare("
@@ -62,10 +76,10 @@ function generateMonthlyPayment($conn, $boarding, $currentMonth, $academicYearId
     ");
     $expenseStmt->bind_param('is', $academicYearId, $monthStart);
     $expenseStmt->execute();
-    $expenses = $expenseStmt->get_result()->fetch_all(MYSQLI_ASSOC);
+    $Expenses = $expenseStmt->get_result()->fetch_all(MYSQLI_ASSOC);
     $expenseStmt->close();
 
-    foreach ($expenses as $expense) {
+    foreach ($Expenses as $expense) {
         if ($expense['description'] == 'Water Bill' && $expense['amount'] > 3000.00) {
             $utilitySurcharge += 100.00;
         }
@@ -108,8 +122,8 @@ function generateMonthlyPayment($conn, $boarding, $currentMonth, $academicYearId
     $advanceAmount = $advanceStmt->get_result()->fetch_assoc()['total_advance'] ?? 0.00;
     $advanceStmt->close();
 
-    // Total payment amount including previous balance, minus advance
-    $totalAmount = $monthlyRent + $applianceCharges + $utilitySurcharge + $latePenalty + $previousBalance - $advanceAmount;
+    // Total payment amount including previous balance and guest charges, minus advance
+    $totalAmount = $monthlyRent + $applianceCharges + $guestCharges + $utilitySurcharge + $latePenalty + $previousBalance - $advanceAmount;
     $totalAmount = max(0, $totalAmount); // Ensure total is not negative
     $balanceAmount = $totalAmount; // Initial balance for unpaid payment
 
@@ -128,8 +142,14 @@ function generateMonthlyPayment($conn, $boarding, $currentMonth, $academicYearId
     ");
     $paymentDate = $today->format('Y-m-d');
     $reason = '';
+    if ($applianceCharges > 0) {
+        $reason .= "Appliance Charges: ₱" . number_format($applianceCharges, 2) . " (" . $appliancesStr . ")";
+    }
+    if ($guestCharges > 0) {
+        $reason .= ($reason ? '; ' : '') . "Guest Stay Charges: ₱" . number_format($guestCharges, 2);
+    }
     if ($utilitySurcharge > 0) {
-        $reason .= "Utility Surcharge: ₱" . number_format($utilitySurcharge, 2);
+        $reason .= ($reason ? '; ' : '') . "Utility Surcharge: ₱" . number_format($utilitySurcharge, 2);
     }
     if ($latePenalty > 0) {
         $reason .= ($reason ? '; ' : '') . "Late Penalty: ₱" . number_format($latePenalty, 2);

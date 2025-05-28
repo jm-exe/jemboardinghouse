@@ -1,3 +1,4 @@
+
 <?php
 header('Content-Type: application/json');
 require_once '../connection/db.php';
@@ -10,16 +11,24 @@ try {
     $academicYearId = $_POST['academic_year_id'] ?? 0;
     $paymentDate = $_POST['payment_date'] ?? date('Y-m-d');
     $boardingId = $_POST['boarding_id'] ?? 0;
+    $tenantId = $_POST['tenant_id'] ?? 0;
 
-    if (!$month || !$boardingId) {
+    if (!$month || !$boardingId || !$tenantId) {
         echo json_encode(['error' => 'Missing required parameters']);
         exit();
     }
 
     $surcharge = 0.00;
     $latePenalty = 0.00;
-    $reason = [];
+    $guestCharges = 0.00;
     $advanceAmount = 0.00;
+    $reason = [];
+
+    // Fetch current academic year if not provided
+    if (!$academicYearId) {
+        $academicYearStmt = $conn->query("SELECT academic_year_id FROM academic_years WHERE is_current = 1");
+        $academicYearId = $academicYearStmt->fetch_assoc()['academic_year_id'] ?? 0;
+    }
 
     // Fetch advance payments
     $advanceStmt = $conn->prepare("
@@ -60,6 +69,23 @@ try {
         }
     }
 
+    // Fetch guest stay charges
+    $guestStmt = $conn->prepare("
+        SELECT SUM(charge) as total_guest_charges
+        FROM guest_stays
+        WHERE tenant_id = ? AND YEAR(stay_date) = ? AND MONTH(stay_date) = ? AND academic_year_id = ?
+    ");
+    $year = substr($month, 0, 4);
+    $monthNum = substr($month, 5, 2);
+    $guestStmt->bind_param('iiii', $tenantId, $year, $monthNum, $academicYearId);
+    $guestStmt->execute();
+    $guestResult = $guestStmt->get_result()->fetch_assoc();
+    $guestCharges = (float)($guestResult['total_guest_charges'] ?? 0.00);
+    $guestStmt->close();
+    if ($guestCharges > 0) {
+        $reason[] = "Guest Stay Charges: ₱" . number_format($guestCharges, 2);
+    }
+
     // Calculate late penalty
     $dueDate = new DateTime($month . '-07');
     $gracePeriodEnd = new DateTime($month . '-21');
@@ -73,10 +99,13 @@ try {
     echo json_encode([
         'surcharge' => $surcharge,
         'latePenalty' => $latePenalty,
+        'guestCharges' => $guestCharges,
         'advanceAmount' => $advanceAmount,
         'reason' => implode('; ', $reason)
     ]);
 } catch (Exception $e) {
     echo json_encode(['error' => 'Server error: ' . $e->getMessage()]);
+} finally {
+    $conn->close();
 }
 ?>

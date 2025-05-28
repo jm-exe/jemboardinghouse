@@ -21,19 +21,17 @@ $newPayment = isset($_POST['new_payment']) ? $_POST['new_payment'] : null;
 $paymentId = $newPayment ? null : $_GET['payment_id'];
 
 if ($newPayment) {
-    // For new advance/other payments
     $tenantId = $_POST['tenant_id'];
     $boardingId = $_POST['boarding_id'];
-    $paymentType = $_POST['payment_type'] ?? $newPayment; // Fallback to new_payment value
+    $paymentType = $_POST['payment_type'] ?? $newPayment;
     $month = $_POST['payment_for_month_of'] ?? date('Y-m');
     $paymentDate = $_POST['payment_date'] ?? date('Y-m-d');
     $tenderAmount = floatval($_POST['tender_amount'] ?? 0);
     $reason = $_POST['reason'] ?? '';
     $appliancesStr = '';
     $applianceCharges = 0.00;
-    $monthlyRent = 0.00; // No rent for advance/other payments
+    $monthlyRent = 0.00;
 } else {
-    // Fetch payment details for existing payment
     $paymentStmt = $conn->prepare("
         SELECT p.*, t.tenant_id, t.first_name, t.last_name, b.boarding_id, b.bed_id
         FROM payments p
@@ -101,19 +99,19 @@ $tenants = $tenantsStmt->fetch_all(MYSQLI_ASSOC);
 // Initialize error variable
 $error = '';
 
-// Function to calculate utility surcharges and late penalties
-function calculateSurchargesAndPenalties($conn, $academicYearId, $month, $paymentDate, $boardingId) {
+// Function to calculate utility surcharges, late penalties, and guest charges
+function calculateSurchargesAndPenalties($conn, $academicYearId, $month, $paymentDate, $boardingId, $tenantId) {
     $surcharge = 0.00;
     $latePenalty = 0.00;
-    $reason = [];
+    $guestCharges = 0.00;
     $advanceAmount = 0.00;
+    $reason = [];
 
     if (!$academicYearId) {
         $academicYearStmt = $conn->query("SELECT academic_year_id FROM academic_years WHERE is_current = 1");
         $academicYearId = $academicYearStmt->fetch_assoc()['academic_year_id'] ?? 0;
     }
 
-    // Fetch advance payments
     $advanceStmt = $conn->prepare("
         SELECT SUM(payment_amount) as total_advance
         FROM payments
@@ -151,6 +149,22 @@ function calculateSurchargesAndPenalties($conn, $academicYearId, $month, $paymen
         }
     }
 
+    $guestStmt = $conn->prepare("
+        SELECT SUM(charge) as total_guest_charges
+        FROM guest_stays
+        WHERE tenant_id = ? AND YEAR(stay_date) = ? AND MONTH(stay_date) = ? AND academic_year_id = ?
+    ");
+    $year = substr($month, 0, 4);
+    $monthNum = substr($month, 5, 2);
+    $guestStmt->bind_param('iiii', $tenantId, $year, $monthNum, $academicYearId);
+    $guestStmt->execute();
+    $guestResult = $guestStmt->get_result()->fetch_assoc();
+    $guestCharges = (float)($guestResult['total_guest_charges'] ?? 0.00);
+    $guestStmt->close();
+    if ($guestCharges > 0) {
+        $reason[] = "Guest Stay Charges: ₱" . number_format($guestCharges, 2);
+    }
+
     $dueDate = new DateTime($month . '-07');
     $gracePeriodEnd = new DateTime($month . '-21');
     $paymentDateObj = new DateTime($paymentDate);
@@ -163,6 +177,7 @@ function calculateSurchargesAndPenalties($conn, $academicYearId, $month, $paymen
     return [
         'surcharge' => $surcharge,
         'latePenalty' => $latePenalty,
+        'guestCharges' => $guestCharges,
         'advanceAmount' => $advanceAmount,
         'reason' => implode('; ', $reason)
     ];
@@ -249,10 +264,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$newPayment) {
     $previousBalance = $balanceStmt->get_result()->fetch_assoc()['total_balance'] ?? 0.00;
     $balanceStmt->close();
 
-    // Calculate surcharges, penalties, and advance
-    $charges = calculateSurchargesAndPenalties($conn, $payment['academic_year_id'], $month, $paymentDate, $payment['boarding_id']);
-    $totalAmount = $monthlyRent + $applianceCharges + $charges['surcharge'] + $charges['latePenalty'] + $previousBalance - $charges['advanceAmount'];
-    $totalAmount = max(0, $totalAmount); // Ensure total is not negative
+    // Calculate surcharges, penalties, and guest charges
+    $charges = calculateSurchargesAndPenalties($conn, $payment['academic_year_id'], $month, $paymentDate, $payment['boarding_id'], $tenantId);
+    $totalAmount = $monthlyRent + $applianceCharges + $charges['surcharge'] + $charges['latePenalty'] + $charges['guestCharges'] + $previousBalance - $charges['advanceAmount'];
+    $totalAmount = max(0, $totalAmount);
     $reason = $charges['reason'];
     if ($previousBalance > 0) {
         $reason .= ($reason ? '; ' : '') . "Previous Balance: ₱" . number_format($previousBalance, 2);
@@ -262,45 +277,45 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$newPayment) {
     $balance = $tenderAmount < $totalAmount ? $totalAmount - $tenderAmount : 0.00;
     if ($balance > 0 && $partialReason) {
         $reason .= ($reason ? '; ' : '') . "Partial Payment: ₱" . number_format($tenderAmount, 2) . " (Reason: $partialReason)";
-    }
-
-    // Validate tender amount
-    if ($tenderAmount < 0) {
-        $error = "Tender amount cannot be negative.";
+    } elseif ($balance > 0 && !$partialReason) {
+        $error = "Partial payment detected. Please provide a reason for the partial payment.";
     } else {
-        // Update payment
-        $updateStmt = $conn->prepare("
-            UPDATE payments 
-            SET payment_amount = ?, payment_date = ?, method = 'Cash', appliance_charges = ?, appliances = ?, reason = ?, balance = ?
-            WHERE payment_id = ?
-        ");
-        $updateStmt->bind_param('dsdssid', 
-            $totalAmount, 
-            $paymentDate, 
-            $applianceCharges, 
-            $appliancesStr, 
-            $reason, 
-            $balance, 
-            $paymentId
-        );
-        $updateStmt->execute();
-        $updateStmt->close();
+        // Validate tender amount
+        if ($tenderAmount < 0) {
+            $error = "Tender amount cannot be negative.";
+        } else {
+            // Update payment
+            $updateStmt = $conn->prepare("
+                UPDATE payments 
+                SET payment_amount = ?, payment_date = ?, method = 'Cash', appliance_charges = ?, appliances = ?, reason = ?, balance = ?
+                WHERE payment_id = ?
+            ");
+            $updateStmt->bind_param('dsdssid', 
+                $totalAmount, 
+                $paymentDate, 
+                $applianceCharges, 
+                $appliancesStr, 
+                $reason, 
+                $balance, 
+                $paymentId
+            );
+            $updateStmt->execute();
+            $updateStmt->close();
 
-        // Generate or update receipt
-        handleReceipt($conn, $paymentId, $payment['tenant_id'], $tenderAmount, $paymentDate, $appliancesStr, $payment['boarding_id'], $reason, $paymentType, $monthlyRent);
+            // Generate or update receipt
+            handleReceipt($conn, $paymentId, $payment['tenant_id'], $tenderAmount, $paymentDate, $appliancesStr, $payment['boarding_id'], $reason, $paymentType, $monthlyRent);
 
-        $_SESSION['success'] = "Payment processed successfully.";
-        header("Location: payments.php");
-        exit();
+            $_SESSION['success'] = "Payment processed successfully.";
+            header("Location: payments.php");
+            exit();
+        }
     }
 } elseif ($_SERVER['REQUEST_METHOD'] === 'POST' && $newPayment) {
-    // Validate tender amount for new payment
     if ($tenderAmount < 0) {
         $error = "Tender amount cannot be negative.";
     } elseif ($tenderAmount == 0) {
         $error = "Tender amount must be greater than zero.";
     } else {
-        // Handle new advance or other payment
         $userStmt = $conn->prepare("SELECT user_id FROM tenants WHERE tenant_id = ?");
         $userStmt->bind_param('i', $tenantId);
         $userStmt->execute();
@@ -310,7 +325,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$newPayment) {
         $academicYearStmt = $conn->query("SELECT academic_year_id FROM academic_years WHERE is_current = 1");
         $academicYearId = $academicYearStmt->fetch_assoc()['academic_year_id'] ?? 0;
 
-        // Insert new payment
         $insertStmt = $conn->prepare("
             INSERT INTO payments 
             (user_id, boarding_id, payment_amount, payment_date, method, appliance_charges, appliances, academic_year_id, payment_for_month_of, reason, payment_type, balance)
@@ -330,7 +344,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$newPayment) {
         $newPaymentId = $conn->insert_id;
         $insertStmt->close();
 
-        // Generate receipt
         handleReceipt($conn, $newPaymentId, $tenantId, $tenderAmount, $paymentDate, '', $boardingId, $reason, $paymentType, 0.00);
 
         $_SESSION['success'] = "Payment recorded successfully.";
@@ -340,7 +353,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$newPayment) {
 }
 
 // Calculate initial surcharges and penalties for display
-$initialCharges = $newPayment ? ['surcharge' => 0.00, 'latePenalty' => 0.00, 'advanceAmount' => 0.00, 'reason' => ''] : calculateSurchargesAndPenalties($conn, $payment['academic_year_id'], $month, $payment['payment_date'], $boardingId);
+$initialCharges = $newPayment ? ['surcharge' => 0.00, 'latePenalty' => 0.00, 'guestCharges' => 0.00, 'advanceAmount' => 0.00, 'reason' => ''] : calculateSurchargesAndPenalties($conn, $payment['academic_year_id'], $month, $payment['payment_date'], $boardingId, $tenantId);
 // Calculate previous balance for display
 $displayPreviousBalance = 0.00;
 if (!$newPayment && $paymentType === 'Monthly Rent') {
@@ -359,10 +372,13 @@ $displayReason = $initialReason ? str_replace(';', "\n", $initialReason) : 'None
 if ($displayPreviousBalance > 0) {
     $displayReason .= ($displayReason ? "\n" : '') . "Previous Balance: ₱" . number_format($displayPreviousBalance, 2);
 }
+// Modified: Set initial tender amount to grand total for Monthly Rent
+$initialTenderAmount = isset($_POST['tender_amount']) ? floatval($_POST['tender_amount']) : ($newPayment ? $tenderAmount : $initialTotalAmount);
 $initialTotalAmount = $paymentType === 'Monthly Rent' && !$newPayment 
-    ? $monthlyRent + $payment['appliance_charges'] + $initialCharges['surcharge'] + $initialCharges['latePenalty'] + $displayPreviousBalance - $initialCharges['advanceAmount']
+    ? $monthlyRent + $payment['appliance_charges'] + $initialCharges['surcharge'] + $initialCharges['latePenalty'] + $initialCharges['guestCharges'] + $displayPreviousBalance - $initialCharges['advanceAmount']
     : ($newPayment ? $tenderAmount : $payment['payment_amount']);
 $initialTotalAmount = max(0, $initialTotalAmount);
+$isPartialPayment = ($paymentType === 'Monthly Rent' && !$newPayment && $initialTenderAmount < $initialTotalAmount && $initialTenderAmount > 0);
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -489,12 +505,16 @@ $initialTotalAmount = max(0, $initialTotalAmount);
                             <td>Appliances</td>
                             <td>₱<span id="applianceAmount"><?php echo number_format($payment['appliance_charges'], 2); ?></span></td>
                         </tr>
+                        <tr>
+                            <td>Guest Stay Charges</td>
+                            <td>₱<span id="guestChargeAmount"><?php echo number_format($initialCharges['guestCharges'], 2); ?></span></td>
+                        </tr>
                         <tr class="total-row">
                             <td>Subtotal</td>
-                            <td>₱<span id="subtotalAmount"><?php echo number_format($monthlyRent + $payment['appliance_charges'], 2); ?></span></td>
+                            <td>₱<span id="subtotalAmount"><?php echo number_format($monthlyRent + $payment['appliance_charges'] + $initialCharges['guestCharges'], 2); ?></span></td>
                         </tr>
                         <tr>
-                            <td>Utility Surcharges</td>
+                            <td>Utility Surcharge</td>
                             <td>₱<span id="surchargeAmount"><?php echo number_format($initialCharges['surcharge'], 2); ?></span></td>
                         </tr>
                         <tr>
@@ -509,9 +529,9 @@ $initialTotalAmount = max(0, $initialTotalAmount);
                             <td>Advance Payment Applied</td>
                             <td>-₱<span id="advanceAmount"><?php echo number_format($initialCharges['advanceAmount'], 2); ?></span></td>
                         </tr>
-                        <tr Hanson>                            <tr class="total-row">
+                        <tr class="total-row">
                             <td>Grand Total</td>
-                            <td>₱<span id="totalAmount"><?php echo number_format($initialTotalAmount, 2); ?></span></td>
+                            <td><h1><strong>₱<span id="totalAmount"><?php echo number_format($initialTotalAmount, 2); ?></strong></h1></td>
                         </tr>
                     <?php else: ?>
                         <tr>
@@ -521,29 +541,36 @@ $initialTotalAmount = max(0, $initialTotalAmount);
                     <?php endif; ?>
                 </tbody>
             </table>
+            <!-- Modified: Dynamic partial payment alert -->
+            <div id="partialPaymentAlert" class="alert alert-warning alert-dismissible fade show <?php echo $isPartialPayment ? '' : 'd-none'; ?>" role="alert">
+                <strong>Partial Payment:</strong> The tender amount (₱<span id="tenderAmountDisplay"><?php echo number_format($initialTenderAmount, 2); ?></span>) is less than the grand total (₱<span id="totalAmountDisplay"><?php echo number_format($initialTotalAmount, 2); ?></span>). Please provide a reason for the partial payment below.
+                <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+            </div>
             <div class="reason-section">
                 <label class="form-label">Reason for Additional Charges</label>
-                <textarea class="form-control" id="reason" rows="3" disabled><?php echo htmlspecialchars($displayReason); ?></textarea>
+                <textarea class="form-control" id="reason" rows="4" disabled><?php echo htmlspecialchars($displayReason); ?></textarea>
             </div>
             <div class="mt-3">
                 <label class="form-label">Partial Payment Reason (if applicable)</label>
-                <textarea name="partial_reason" class="form-control" rows="3"><?php echo htmlspecialchars($_POST['partial_reason'] ?? ''); ?></textarea>
+                <textarea id="partial_reason" name="partial_reason" class="form-control" rows="2"><?php echo htmlspecialchars($_POST['partial_reason'] ?? ''); ?></textarea>
             </div>
         <?php endif; ?>
         <div class="mt-3">
             <label class="form-label">Payment Date *</label>
-            <input type="date" name="payment_date" id="paymentDate" class="form-control" 
-                   value="<?php echo isset($_POST['payment_date']) ? htmlspecialchars($_POST['payment_date']) : ($newPayment ? date('Y-m-d') : $payment['payment_date']); ?>" required>
+            <input id="paymentDate" type="date" name="payment_date" 
+                   value="<?php echo isset($_POST['payment_date']) ? htmlspecialchars($_POST['payment_date']) : ($newPayment ? date('Y-m-d') : $payment['payment_date']); ?>" 
+                   class="form-control" required>
         </div>
         <div class="mt-3">
             <label class="form-label">Tender Amount *</label>
-            <input type="number" name="tender_amount" id="tenderAmount" class="form-control" step="0.01" min="0" 
-                   value="<?php echo isset($_POST['tender_amount']) ? htmlspecialchars($_POST['tender_amount']) : ($newPayment ? $tenderAmount : $payment['payment_amount']); ?>" required>
-            <div id="tenderError" class="invalid-feedback"></div>
+            <input id="tenderAmount" type="number" name="tender_amount" 
+                   value="<?php echo isset($_POST['tender_amount']) ? htmlspecialchars($_POST['tender_amount']) : number_format($initialTotalAmount, 2); ?>" 
+                   step="0.01" min="0" class="form-control" required>
+            <div id="errorAmount" class="invalid-feedback"></div>
         </div>
         <div class="mt-3">
             <label class="form-label">Change</label>
-            <input type="text" id="changeAmount" class="form-control" value="0.00" readonly>
+            <input id="changeAmount" type="text" value="0.00" class="form-control" readonly>
         </div>
         <input type="hidden" name="payment_amount" id="paymentAmount" value="<?php echo $newPayment ? $tenderAmount : $initialTotalAmount; ?>">
         <input type="hidden" id="monthlyRent" value="<?php echo $monthlyRent; ?>">
@@ -557,19 +584,20 @@ $initialTotalAmount = max(0, $initialTotalAmount);
         </div>
     </form>
 </div>
+
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 <script>
-// JavaScript for dynamic total dues calculation and change
 document.addEventListener('DOMContentLoaded', function() {
     const monthlyRent = parseFloat(document.getElementById('monthlyRent').value);
     const paymentAmountInput = document.getElementById('paymentAmount');
     const paymentDateInput = document.getElementById('paymentDate');
     const tenderAmountInput = document.getElementById('tenderAmount');
     const changeAmountInput = document.getElementById('changeAmount');
-    const tenderError = document.getElementById('tenderError');
+    const tenderError = document.getElementById('errorAmount');
     const reasonInput = document.getElementById('reason');
     const rentAmount = document.getElementById('rentAmount');
     const applianceAmount = document.getElementById('applianceAmount');
+    const guestAmount = document.getElementById('guestChargeAmount');
     const subtotalAmount = document.getElementById('subtotalAmount');
     const surchargeAmount = document.getElementById('surchargeAmount');
     const penaltyAmount = document.getElementById('penaltyAmount');
@@ -586,12 +614,19 @@ document.addEventListener('DOMContentLoaded', function() {
     const paymentTypeSelect = document.getElementById('paymentType');
     const monthField = document.getElementById('monthField');
     const initialAdvanceAmount = parseFloat(document.getElementById('initialAdvanceAmount').value);
+    // Added: Variables for partial payment alert
+    const partialPaymentAlert = document.getElementById('partialPaymentAlert');
+    const tenderAmountDisplay = document.getElementById('tenderAmountDisplay');
+    const totalAmountDisplay = document.getElementById('totalAmountDisplay');
+    const partialReasonInput = document.getElementById('partial_reason');
 
     function calculateTotal() {
         if (paymentType !== 'Monthly Rent') {
             const tender = parseFloat(tenderAmountInput.value) || 0;
             totalAmount.textContent = tender.toFixed(2);
             paymentAmountInput.value = tender.toFixed(2);
+            tenderAmountInput.value = tender.toFixed(2); // Ensure tender amount matches for non-Monthly Rent
+            partialPaymentAlert.classList.add('d-none'); // Hide alert for non-Monthly Rent
             updateChange();
             return;
         }
@@ -610,18 +645,19 @@ document.addEventListener('DOMContentLoaded', function() {
         });
 
         applianceAmount.textContent = applianceCharges.toFixed(2);
-        const subtotal = monthlyRent + applianceCharges;
+        const subtotal = monthlyRent + applianceCharges + parseFloat(guestAmount.textContent || 0);
         subtotalAmount.textContent = subtotal.toFixed(2);
 
         const paymentDate = paymentDateInput.value;
         const month = '<?php echo $newPayment ? date('Y-m') : $month; ?>';
         const academicYearId = '<?php echo $newPayment ? 0 : $payment['academic_year_id']; ?>';
         const boardingId = '<?php echo $newPayment ? $boardingId : $payment['boarding_id']; ?>';
+        const tenantId = '<?php echo $newPayment ? $tenantId : $tenantId; ?>';
 
         fetch('calculate_charges.php', {
             method: 'POST',
             headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            body: `month=${month}&academic_year_id=${academicYearId}&payment_date=${paymentDate}&boarding_id=${boardingId}`
+            body: `tenant_id=${tenantId}&month=${month}&academic_year_id=${academicYearId}&payment_date=${paymentDate}&boarding_id=${boardingId}`
         })
         .then(response => response.json())
         .then(data => {
@@ -629,24 +665,30 @@ document.addEventListener('DOMContentLoaded', function() {
                 console.error('Error from calculate_charges:', data.error);
                 surchargeAmount.textContent = '0.00';
                 penaltyAmount.textContent = '0.00';
+                guestAmount.textContent = '0.00';
                 advanceAmount.textContent = '0.00';
                 reasonInput.value = 'Error calculating charges';
                 totalAmount.textContent = subtotal.toFixed(2);
                 paymentAmountInput.value = subtotal.toFixed(2);
+                tenderAmountInput.value = subtotal.toFixed(2); // Set tender amount to subtotal on error
+                partialPaymentAlert.classList.add('d-none');
                 updateChange();
                 return;
             }
             const surcharge = parseFloat(data.surcharge || 0);
             const latePenalty = parseFloat(data.latePenalty || 0);
+            const guestCharges = parseFloat(data.guestCharges || 0);
             const advance = parseFloat(data.advanceAmount || 0);
-            const prevBalance = parseFloat(previousBalance ? previousBalance.textContent : '0.00');
+            const prevBalance = parseFloat(previousBalance.textContent.replace(/,/g, '') || 0);
             const total = Math.max(0, subtotal + surcharge + latePenalty + prevBalance - advance);
 
             surchargeAmount.textContent = surcharge.toFixed(2);
             penaltyAmount.textContent = latePenalty.toFixed(2);
+            guestAmount.textContent = guestCharges.toFixed(2);
             advanceAmount.textContent = advance.toFixed(2);
             totalAmount.textContent = total.toFixed(2);
             paymentAmountInput.value = total.toFixed(2);
+            tenderAmountInput.value = total.toFixed(2); // Modified: Set tender amount to grand total
             reasonInput.value = data.reason || 'None';
             if (prevBalance > 0) {
                 reasonInput.value += (reasonInput.value ? '\n' : '') + `Previous Balance: ₱${prevBalance.toFixed(2)}`;
@@ -657,23 +699,34 @@ document.addEventListener('DOMContentLoaded', function() {
             console.error('Fetch error:', error);
             surchargeAmount.textContent = '0.00';
             penaltyAmount.textContent = '0.00';
+            guestAmount.textContent = '0.00';
             advanceAmount.textContent = '0.00';
             reasonInput.value = 'Error fetching charges';
             totalAmount.textContent = subtotal.toFixed(2);
             paymentAmountInput.value = subtotal.toFixed(2);
+            tenderAmountInput.value = subtotal.toFixed(2); // Set tender amount to subtotal on error
+            partialPaymentAlert.classList.add('d-none');
             updateChange();
         });
     }
 
     function updateChange() {
-        const total = parseFloat(totalAmount.textContent) || 0;
+        const total = parseFloat(totalAmount.textContent.replace(/,/g, '')) || 0;
         const tender = parseFloat(tenderAmountInput.value) || 0;
         const change = tender - total;
         changeAmountInput.value = change >= 0 ? change.toFixed(2) : '0.00';
+        // Added: Update partial payment alert
+        if (paymentType === 'Monthly Rent' && tender < total && tender > 0) {
+            partialPaymentAlert.classList.remove('d-none');
+            tenderAmountDisplay.textContent = tender.toFixed(2);
+            totalAmountDisplay.textContent = total.toFixed(2);
+        } else {
+            partialPaymentAlert.classList.add('d-none');
+        }
     }
 
     form.addEventListener('submit', function(event) {
-        const total = parseFloat(totalAmount.textContent) || 0;
+        const total = parseFloat(totalAmount.textContent.replace(/,/g, '')) || 0;
         const tender = parseFloat(tenderAmountInput.value) || 0;
         if (tender < 0) {
             event.preventDefault();
@@ -683,9 +736,18 @@ document.addEventListener('DOMContentLoaded', function() {
             event.preventDefault();
             tenderAmountInput.classList.add('is-invalid');
             tenderError.textContent = 'Tender amount must be greater than zero.';
+        } else if (paymentType === 'Monthly Rent' && tender < total && tender > 0 && !partialReasonInput.value.trim()) {
+            event.preventDefault();
+            partialReasonInput.classList.add('is-invalid');
+            tenderError.textContent = 'Please provide a reason for the partial payment.';
+            partialPaymentAlert.classList.remove('d-none');
+            tenderAmountDisplay.textContent = tender.toFixed(2);
+            totalAmountDisplay.textContent = total.toFixed(2);
+            partialReasonInput.focus();
         } else {
             tenderAmountInput.classList.remove('is-invalid');
             tenderError.textContent = '';
+            partialReasonInput.classList.remove('is-invalid');
         }
     });
 
@@ -714,6 +776,7 @@ document.addEventListener('DOMContentLoaded', function() {
         updateChange();
         tenderAmountInput.classList.remove('is-invalid');
         tenderError.textContent = '';
+        partialReasonInput.classList.remove('is-invalid');
     });
 
     calculateTotal();

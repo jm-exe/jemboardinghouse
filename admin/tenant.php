@@ -80,7 +80,13 @@ $query = "SELECT t.*,
           LEFT JOIN course c ON t.course_id = c.course_id
           LEFT JOIN guardians g ON t.guardian_id = g.guardian_id
           LEFT JOIN academic_years a ON t.academic_year_id = a.academic_year_id
-          LEFT JOIN boarding bo ON t.tenant_id = bo.tenant_id
+          LEFT JOIN (
+              SELECT tenant_id, bed_id, start_date, due_date
+              FROM boarding
+              WHERE due_date >= CURDATE()
+              ORDER BY boarding_id DESC
+              LIMIT 1
+          ) bo ON t.tenant_id = bo.tenant_id
           LEFT JOIN beds b ON bo.bed_id = b.bed_id
           LEFT JOIN rooms r ON b.room_id = r.room_id
           LEFT JOIN floors f ON r.floor_id = f.floor_id
@@ -245,6 +251,7 @@ if ($stmt = $conn->prepare($query)) {
                         <input type="hidden" name="search" value="<?= htmlspecialchars($search) ?>">
                         <input type="hidden" name="floor_id" value="<?= htmlspecialchars($selectedFloor) ?>">
                         <input type="hidden" name="room_id" value="<?= htmlspecialchars($selectedRoom) ?>">
+                        <input type="hidden" name="academic_year_id" value="<?= htmlspecialchars($selectedYear) ?>">
                         <select name="tenant_type" class="form-select" onchange="this.form.submit()">
                             <option value="">All Types</option>
                             <option value="Student" <?= $tenantType == 'Student' ? 'selected' : '' ?>>Students</option>
@@ -400,7 +407,7 @@ if ($stmt = $conn->prepare($query)) {
                             <td>
                                 <div class="tenant-photo">
                                     <?php if (!empty($tenant['profile_picture'])): ?>
-                                        <img src="../uploads/profiles/<?= htmlspecialchars($tenant['profile_picture']) ?>" 
+                                        <img src="../Uploads/profiles/<?= htmlspecialchars($tenant['profile_picture']) ?>" 
                                              alt="<?= htmlspecialchars($tenant['first_name'] . ' ' . $tenant['last_name']) ?>">
                                     <?php else: ?>
                                         <?= strtoupper(substr($tenant['first_name'], 0, 1) . substr($tenant['last_name'], 0, 1)) ?>

@@ -1,3 +1,4 @@
+
 <?php
 session_start();
 require_once '../connection/db.php';
@@ -19,7 +20,7 @@ $payment_id = $_GET['payment_id'];
 
 // Fetch payment details with correct columns from your database
 $stmt = $conn->prepare("
-    SELECT p.*, t.first_name, t.last_name, t.mobile_no,
+    SELECT p.*, t.first_name, t.last_name, t.mobile_no, t.tenant_id,
            b.bed_id, bed.monthly_rent,
            r.room_no,
            bed.bed_no, bed.deck
@@ -41,6 +42,68 @@ if (!$payment) {
     header("Location: payments.php");
     exit();
 }
+
+// Fetch current academic year for fallback
+$academicYearStmt = $conn->query("SELECT academic_year_id FROM academic_years WHERE is_current = 1");
+$currentAcademicYearId = $academicYearStmt->fetch_assoc()['academic_year_id'] ?? 0;
+
+// Initialize reason display for Notes section
+$notes = htmlspecialchars($payment['reason'] ?: '');
+$guest_total = 0.00;
+$other_charges = [];
+
+// Fetch guest stay details for Monthly Rent payments
+if ($payment['payment_type'] == 'Monthly Rent' && !empty($payment['payment_for_month_of'])) {
+    $year = substr($payment['payment_for_month_of'], 0, 4);
+    $month_num = substr($payment['payment_for_month_of'], 5, 2);
+    $academic_year_id = $payment['academic_year_id'] ?: $currentAcademicYearId;
+
+    $guest_stmt = $conn->prepare("
+        SELECT stay_date, charge
+        FROM guest_stays
+        WHERE tenant_id = ? AND YEAR(stay_date) = ? AND MONTH(stay_date) = ? AND academic_year_id = ?
+    ");
+    $guest_stmt->bind_param('iiii', $payment['tenant_id'], $year, $month_num, $academic_year_id);
+    $guest_stmt->execute();
+    $guest_result = $guest_stmt->get_result();
+    $guest_reasons = [];
+
+    while ($guest = $guest_result->fetch_assoc()) {
+        $stay_date = date('Y-m-d', strtotime($guest['stay_date']));
+        $guest_reasons[] = "Guest Stay on $stay_date: ₱" . number_format($guest['charge'], 2);
+        $guest_total += (float)$guest['charge'];
+    }
+    $guest_stmt->close();
+
+    if (!empty($guest_reasons)) {
+        // Remove generic "Guest Stay Charges" to avoid duplication
+        $notes = preg_replace('/Guest Stay Charges: ₱[0-9,.]+(; )?/', '', $notes);
+        $notes = trim($notes, '; ');
+        // Append detailed guest stay reasons
+        $notes = empty($notes)
+            ? implode('; ', $guest_reasons)
+            : $notes . '; ' . implode('; ', $guest_reasons);
+    }
+}
+
+// Parse other charges from reason (e.g., surcharges, penalties)
+if (!empty($payment['reason'])) {
+    $reason_parts = explode('; ', $payment['reason']);
+    foreach ($reason_parts as $part) {
+        if (preg_match('/^(Water Bill Surcharge|Electric Bill Surcharge|Late Penalty|Advance Payment Applied): ₱([0-9,.]+)/', $part, $matches)) {
+            $charge_name = $matches[1];
+            $charge_amount = (float)str_replace(',', '', $matches[2]);
+            // Negate advance payment for correct totaling
+            if ($charge_name == 'Advance Payment Applied') {
+                $charge_amount = -$charge_amount;
+            }
+            $other_charges[] = ['name' => $charge_name, 'amount' => $charge_amount];
+        }
+    }
+}
+
+// Set notes to 'None' if empty
+$notes = empty($notes) ? 'None' : $notes;
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -171,6 +234,18 @@ if (!$payment) {
                     <td>₱<?php echo number_format($payment['appliance_charges'], 2); ?></td>
                 </tr>
                 <?php endif; ?>
+                <?php if ($guest_total > 0): ?>
+                <tr>
+                    <td>Guest Stay Charges</td>
+                    <td>₱<?php echo number_format($guest_total, 2); ?></td>
+                </tr>
+                <?php endif; ?>
+                <?php foreach ($other_charges as $charge): ?>
+                <tr>
+                    <td><?php echo htmlspecialchars($charge['name']); ?></td>
+                    <td><?php echo $charge['amount'] < 0 ? '-₱' : '₱'; ?><?php echo number_format(abs($charge['amount']), 2); ?></td>
+                </tr>
+                <?php endforeach; ?>
                 <tr class="table-active">
                     <td><strong>Total Amount Paid</strong></td>
                     <td><strong>₱<?php echo number_format($payment['payment_amount'], 2); ?></strong></td>
@@ -184,12 +259,10 @@ if (!$payment) {
             </tbody>
         </table>
         
-        <?php if (!empty($payment['reason'])): ?>
         <div class="mb-3">
             <h5>Notes</h5>
-            <p><?php echo htmlspecialchars($payment['reason']); ?></p>
+            <p><?php echo htmlspecialchars($notes); ?></p>
         </div>
-        <?php endif; ?>
         
         <div class="receipt-footer">
             <p>Thank you for your payment!</p>

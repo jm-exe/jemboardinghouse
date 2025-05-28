@@ -9,7 +9,6 @@ $totalTenants = 0;
 
 // Get filter parameters
 $search = $_GET['search'] ?? '';
-$selectedYear = $_GET['academic_year_id'] ?? '';
 $tenantType = $_GET['tenant_type'] ?? '';
 $selectedFloor = $_GET['floor_id'] ?? '';
 $selectedRoom = $_GET['room_id'] ?? '';
@@ -29,7 +28,13 @@ $query = "SELECT t.*,
           LEFT JOIN course c ON t.course_id = c.course_id
           LEFT JOIN guardians g ON t.guardian_id = g.guardian_id
           LEFT JOIN academic_years a ON t.academic_year_id = a.academic_year_id
-          LEFT JOIN boarding bo ON t.tenant_id = bo.tenant_id
+          LEFT JOIN (
+              SELECT tenant_id, bed_id, start_date, due_date
+              FROM boarding
+              WHERE due_date >= CURDATE()
+              ORDER BY boarding_id DESC
+              LIMIT 1
+          ) bo ON t.tenant_id = bo.tenant_id
           LEFT JOIN beds b ON bo.bed_id = b.bed_id
           LEFT JOIN rooms r ON b.room_id = r.room_id
           LEFT JOIN floors f ON r.floor_id = f.floor_id
@@ -44,12 +49,6 @@ if (!empty($search)) {
     $types .= str_repeat('s', 6);
     $searchTerm = "%$search%";
     $params = array_fill(0, 6, $searchTerm);
-}
-
-if (!empty($selectedYear)) {
-    $query .= " AND t.academic_year_id = ?";
-    $types .= 'i';
-    $params[] = $selectedYear;
 }
 
 if (!empty($tenantType)) {
@@ -254,10 +253,10 @@ $conn->close();
         Tenant Type: <span><?= $tenantType ?></span><br>
         <?php endif; ?>
         <?php if (!empty($selectedFloor)): ?>
-        Floor: <span><?= $selectedFloor ?></span><br>
+        Floor: <span>Floor <?= htmlspecialchars($selectedFloor) ?></span><br>
         <?php endif; ?>
         <?php if (!empty($selectedRoom)): ?>
-        Room: <span><?= $selectedRoom ?></span><br>
+        Room: <span>Room <?= htmlspecialchars($selectedRoom) ?></span><br>
         <?php endif; ?>
         <?php if (!empty($search)): ?>
         Search Term: <span><?= htmlspecialchars($search) ?></span><br>
@@ -306,13 +305,13 @@ $conn->close();
         }
     ?>
     <div class="floor-header">
-        Floor <?= $floorNo ?>: <?= $floorTenantCount ?> Tenants
+        Floor <?= htmlspecialchars($floorNo) ?>: <?= $floorTenantCount ?> Tenants
     </div>
     
     <div class="room-container">
         <?php foreach ($rooms as $roomNo => $decks): ?>
         <div class="room-box">
-            <div class="room-header">Room <?= $roomNo ?></div>
+            <div class="room-header">Room <?= htmlspecialchars($roomNo) ?></div>
             <div class="beds-container">
                 <div class="bed-column">
                     <div class="bed-header">Upper</div>

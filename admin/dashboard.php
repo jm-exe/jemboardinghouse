@@ -1,4 +1,5 @@
 <?php
+ob_start(); // Start output buffering
 error_reporting(E_ALL);
 ini_set('display_errors', 1);
 session_start();
@@ -21,6 +22,7 @@ $academic_year_result = $conn->query($academic_year_query);
 $academic_year = $academic_year_result->fetch_assoc();
 $academic_year_display = $academic_year ? "{$academic_year['start_year']}-{$academic_year['end_year']}, {$academic_year['semester']} Semester" : "2024-2025, Second Semester";
 $current_academic_year_id = $academic_year['academic_year_id'] ?? 26;
+$current_semester = $academic_year['semester'] ?? 'Second';
 
 // Update beds status based on active boardings
 $update_beds_status = "UPDATE beds b
@@ -77,54 +79,46 @@ $student_tenants = $tenants_data['student_tenants'] ?? 0;
 $non_student_tenants = $tenants_data['non_student_tenants'] ?? 0;
 $stmt->close();
 
-// Fetch semesterly income
+// Fetch semesterly income for current semester
 $income_query = "SELECT ay.semester, COALESCE(SUM(p.payment_amount), 0) as total_income
                  FROM academic_years ay
                  LEFT JOIN payments p ON (p.academic_year_id = ay.academic_year_id OR p.academic_year_id IS NULL)
-                 WHERE ay.academic_year_id = ?
-                 GROUP BY ay.semester
-                 UNION
-                 SELECT 'First' as semester, 0 as total_income";
+                 WHERE ay.academic_year_id = ? AND ay.semester = ?
+                 GROUP BY ay.semester";
 $stmt = $conn->prepare($income_query);
-$stmt->bind_param("i", $current_academic_year_id);
+$stmt->bind_param("is", $current_academic_year_id, $current_semester);
 $stmt->execute();
 $income_result = $stmt->get_result();
 $income_data = ['First' => 0, 'Second' => 0];
-while ($row = $income_result->fetch_assoc()) {
+if ($row = $income_result->fetch_assoc()) {
     $income_data[$row['semester']] = $row['total_income'];
 }
 $stmt->close();
 
-// Fetch semesterly expenses
+// Fetch semesterly expenses for current semester
 $expenses_query = "SELECT ay.semester, COALESCE(SUM(me.amount), 0) as total_expenses
                    FROM academic_years ay
                    LEFT JOIN monthly_expenses me ON me.academic_year_id = ay.academic_year_id
-                   WHERE ay.academic_year_id = ?
-                   GROUP BY ay.semester
-                   UNION
-                   SELECT 'First' as semester, 0 as total_expenses";
+                   WHERE ay.academic_year_id = ? AND ay.semester = ?
+                   GROUP BY ay.semester";
 $stmt = $conn->prepare($expenses_query);
-$stmt->bind_param("i", $current_academic_year_id);
+$stmt->bind_param("is", $current_academic_year_id, $current_semester);
 $stmt->execute();
 $expenses_result = $stmt->get_result();
 $expenses_data = ['First' => 0, 'Second' => 0];
-while ($row = $expenses_result->fetch_assoc()) {
+if ($row = $expenses_result->fetch_assoc()) {
     $expenses_data[$row['semester']] = $row['total_expenses'];
 }
 $stmt->close();
 
-// Fetch net income data
-$net_income_first = $income_data['First'] - $expenses_data['First'];
-$net_income_second = $income_data['Second'] - $expenses_data['Second'];
-$total_net_income = $net_income_first + $net_income_second;
+// Fetch net income data for current semester
+$net_income = $income_data[$current_semester] - $expenses_data[$current_semester];
 
-// Calculate profit/loss percentage
-$profit_loss_first = ($income_data['First'] > 0) ? (($net_income_first / $income_data['First']) * 100) : 0;
-$profit_loss_second = ($income_data['Second'] > 0) ? (($net_income_second / $income_data['Second']) * 100) : 0;
+// Calculate profit/loss percentage for current semester
+$profit_loss = ($income_data[$current_semester] > 0) ? (($net_income / $income_data[$current_semester]) * 100) : 0;
 
-// Calculate expense ratios
-$expense_ratio_first = ($income_data['First'] > 0) ? (($expenses_data['First'] / $income_data['First']) * 100) : 0;
-$expense_ratio_second = ($income_data['Second'] > 0) ? (($expenses_data['Second'] / $income_data['Second']) * 100) : 0;
+// Calculate expense ratio for current semester
+$expense_ratio = ($income_data[$current_semester] > 0) ? (($expenses_data[$current_semester] / $income_data[$current_semester]) * 100) : 0;
 
 // Fetch upper and lower bunk beds and their occupancy
 $upper_beds_query = "SELECT COUNT(*) as total_upper, SUM(CASE WHEN status = 'Occupied' THEN 1 ELSE 0 END) as occupied_upper 
@@ -171,9 +165,13 @@ $stmt->close();
 
 // Fetch annual income data
 $annual_income_query = "SELECT 
-                        CONCAT(ay.start_year, '-', ay.end_year) as year_label,
-                        SUM(CASE WHEN p.payment_type = 'Monthly Rent' OR p.reason LIKE '%room%' THEN p.payment_amount ELSE 0 END) as room_income,
-                        SUM(CASE WHEN p.payment_type != 'Monthly Rent' AND (p.reason NOT LIKE '%room%' OR p.reason IS NULL) THEN p.payment_amount ELSE 0 END) as other_income
+                        COALESCE(CONCAT(ay.start_year, '-', ay.end_year), 'Unassigned') as year_label,
+                        SUM(CASE WHEN p.payment_type = 'Monthly Rent' THEN p.payment_amount - COALESCE(p.appliance_charges, 0) ELSE 0 END) as room_income,
+                        SUM(COALESCE(p.appliance_charges, 0) + 
+                        CASE WHEN p.payment_type IN ('Advance', 'Other') THEN p.payment_amount ELSE 0 END +
+                        COALESCE((SELECT SUM(gs.charge) 
+                        FROM guest_stays gs 
+                        WHERE gs.academic_year_id = p.academic_year_id), 0)) as other_income
                         FROM academic_years ay
                         LEFT JOIN payments p ON (p.academic_year_id = ay.academic_year_id OR p.academic_year_id IS NULL)
                         GROUP BY ay.academic_year_id, ay.start_year, ay.end_year
@@ -191,15 +189,21 @@ while ($row = $annual_income_result->fetch_assoc()) {
 
 // Fetch monthly income data
 $monthly_income_query = "SELECT 
-                         MONTHNAME(p.payment_date) as month_name, 
-                         MONTH(p.payment_date) as month_num,
-                         SUM(CASE WHEN p.payment_type = 'Monthly Rent' OR p.reason LIKE '%room%' THEN p.payment_amount ELSE 0 END) as room_income,
-                         SUM(CASE WHEN p.payment_type != 'Monthly Rent' AND (p.reason NOT LIKE '%room%' OR p.reason IS NULL) THEN p.payment_amount ELSE 0 END) as other_income
-                         FROM payments p
-                         WHERE (p.academic_year_id = ? OR p.academic_year_id IS NULL)
-                         AND YEAR(p.payment_date) = YEAR(CURDATE())
-                         GROUP BY MONTH(p.payment_date), MONTHNAME(p.payment_date)
-                         ORDER BY month_num";
+                        MONTHNAME(p.payment_date) as month_name, 
+                        MONTH(p.payment_date) as month_num,
+                        SUM(CASE WHEN p.payment_type = 'Monthly Rent' THEN p.payment_amount - COALESCE(p.appliance_charges, 0) ELSE 0 END) as room_income,
+                        SUM(COALESCE(p.appliance_charges, 0) + 
+                        CASE WHEN p.payment_type IN ('Advance', 'Other') THEN p.payment_amount ELSE 0 END +
+                        COALESCE((SELECT SUM(gs.charge) 
+                        FROM guest_stays gs 
+                        WHERE gs.academic_year_id = p.academic_year_id 
+                        AND MONTH(gs.stay_date) = MONTH(p.payment_date) 
+                        AND YEAR(gs.stay_date) = YEAR(p.payment_date)), 0)) as other_income
+                        FROM payments p
+                        WHERE (p.academic_year_id = ? OR p.academic_year_id IS NULL)
+                        AND YEAR(p.payment_date) = YEAR(CURDATE())
+                        GROUP BY MONTH(p.payment_date), MONTHNAME(p.payment_date)
+                        ORDER BY month_num";
 $stmt = $conn->prepare($monthly_income_query);
 $stmt->bind_param("i", $current_academic_year_id);
 $stmt->execute();
@@ -217,10 +221,14 @@ $stmt->close();
 
 // Fetch income by category
 $income_category_query = "SELECT 
-                          SUM(CASE WHEN p.payment_type = 'Monthly Rent' OR p.reason LIKE '%room%' THEN p.payment_amount ELSE 0 END) as room_income,
-                          SUM(CASE WHEN p.payment_type != 'Monthly Rent' AND (p.reason NOT LIKE '%room%' OR p.reason IS NULL) THEN p.payment_amount ELSE 0 END) as other_income
-                          FROM payments p
-                          WHERE (p.academic_year_id = ? OR p.academic_year_id IS NULL)";
+                        SUM(CASE WHEN p.payment_type = 'Monthly Rent' THEN p.payment_amount - COALESCE(p.appliance_charges, 0) ELSE 0 END) as room_income,
+                        SUM(COALESCE(p.appliance_charges, 0) + 
+                        CASE WHEN p.payment_type IN ('Advance', 'Other') THEN p.payment_amount ELSE 0 END +
+                        COALESCE((SELECT SUM(gs.charge) 
+                        FROM guest_stays gs 
+                        WHERE gs.academic_year_id = p.academic_year_id), 0)) as other_income
+                        FROM payments p
+                        WHERE (p.academic_year_id = ? OR p.academic_year_id IS NULL)";
 $stmt = $conn->prepare($income_category_query);
 $stmt->bind_param("i", $current_academic_year_id);
 $stmt->execute();
@@ -281,13 +289,15 @@ $conn->close();
       color: #2f8656;
     }
     .div2 {
-      grid-column: 1 / 5;
-      grid-row: 2 / 5;
-      background: #fff;
-      padding: 20px;
-      border-radius: 12px;
-      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-      overflow: hidden;
+            grid-column: 1 / 5;
+            grid-row: 2 / 5;
+            background: #fff;
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+            overflow: hidden; /* Disable div2 scrolling */
+            display: flex; /* Ensure suggestions-container fills div2 */
+            flex-direction: column;
     }
     .div4 {
       grid-column: 5 / 7;
@@ -332,9 +342,12 @@ $conn->close();
       font-weight: bold;
       margin: 0;
     }
+    .tenant-amount {
+      font-size: 36px;
+      color: #ff6b35;
+    }
     .income-amount { color: #2f8656; }
     .expense-amount { color: #4287f5; }
-    .tenant-amount { color: #ff6b35; }
     .currency-symbol {
       font-size: 20px;
       margin-right: 5px;
@@ -522,7 +535,7 @@ $conn->close();
       text-align: center;
       min-height: 400px;
     }
-    .div9, .div10, .div11, .div12 {
+    .div9, .div10, .div11, .div12, .div13 {
       background: #fff;
       padding: 20px;
       border-radius: 12px;
@@ -534,40 +547,26 @@ $conn->close();
     .div9 { grid-column: 5 / 9; grid-row: 5 / 6; }
     .div10 { grid-column: 1 / 5; grid-row: 6 / 7; }
     .div11 { grid-column: 5 / 9; grid-row: 6 / 7; }
-    .div12 {
-    grid-column: 1 / -1;
-    grid-row: 7 / 8;
-    background: #fff;
-    padding: 20px;
-    border-radius: 12px;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-    display: flex;
-    flex-direction: column;
-    min-height: 400px;
-  }
-
-.div12 .chart-container {
-  flex: 1;
-  position: relative;
-  min-height: 300px;
-  width: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-
-}
-
-.financial-summary-item {
-  margin-bottom: 10px;
-  padding-bottom: 10px;
-  
-  padding-right:50px;
-  border-bottom: 1px solid #eee;
-}
-
-.financial-summary-item:last-child {
-  border-bottom: none;
-}
+    .div12 { grid-column: 1 / 5; grid-row: 7 / 8; }
+    .div13 { grid-column: 5 / 9; grid-row: 7 / 8; }
+    .div13 .financial {
+      background: #f9f9f9;
+      padding: 20px;
+      border-radius: 8px;
+      border-left: 4px solid #2f8656;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+    }
+    .financial-summary-item {
+      margin-bottom: 10px;
+      padding-bottom: 10px;
+      padding-right: 20px;
+      border-bottom: 1px solid #eee;
+    }
+    .financial-summary-item:last-child {
+      border-bottom: none;
+    }
     .chart-container {
       flex: 1;
       position: relative;
@@ -584,7 +583,7 @@ $conn->close();
       height: 100% !important;
     }
     .chart-title {
-      margin: 0 0 15px 0;
+      margin: 0 0 15px;
       color: #333;
       font-size: 18px;
       font-weight: 600;
@@ -616,7 +615,7 @@ $conn->close();
         <div class="total-display">
           <h4>Total Semesterly Income</h4>
           <h2 class="total-amount income-amount">
-            <span class="currency-symbol">₱</span><?php echo number_format($income_data['First'] + $income_data['Second'], 2); ?>
+            <span class="currency-symbol">₱</span><?php echo number_format($income_data[$current_semester], 2); ?>
           </h2>
         </div>
       </div>
@@ -624,7 +623,7 @@ $conn->close();
         <div class="total-display">
           <h4>Total Semesterly Expenses</h4>
           <h2 class="total-amount expense-amount">
-            <span class="currency-symbol">₱</span><?php echo number_format($expenses_data['First'] + $expenses_data['Second'], 2); ?>
+            <span class="currency-symbol">₱</span><?php echo number_format($expenses_data[$current_semester], 2); ?>
           </h2>
         </div>
       </div>
@@ -683,21 +682,21 @@ $conn->close();
         </div>
       </div>
       <div class="div8">
-      <div class="total-display">
-        <h4>Total Active Tenants</h4>
-        <h2 class="total-amount tenant-amount"><?php echo $total_tenants; ?></h2>
-        <div style="display: flex; gap: 15px; margin-top: 10px;">
-          <div style="text-align: center;">
-            <div style="font-size: 14px; color: #666;">Students</div>
-            <div style="font-size: 18px; font-weight: bold; color: #2f8656;"><?php echo $student_tenants; ?></div>
-          </div>
-          <div style="text-align: center;">
-            <div style="font-size: 14px; color: #666;">Non-Students</div>
-            <div style="font-size: 18px; font-weight: bold; color: #4287f5;"><?php echo $non_student_tenants; ?></div>
+        <div class="total-display">
+          <h4>Total Active Tenants</h4>
+          <h2 class="total-amount tenant-amount"><?php echo $total_tenants; ?></h2>
+          <div style="display: flex; gap: 15px; margin-top: 10px;">
+            <div style="text-align: center;">
+              <div style="font-size: 14px; color: #666;">Students</div>
+              <div style="font-size: 18px; font-weight: bold; color: #2f8656;"><?php echo $student_tenants; ?></div>
+            </div>
+            <div style="text-align: center;">
+              <div style="font-size: 14px; color: #666;">Non-Students</div>
+              <div style="font-size: 18px; font-weight: bold; color: #4287f5;"><?php echo $non_student_tenants; ?></div>
+            </div>
           </div>
         </div>
       </div>
-    </div>
       <div class="div9">
         <h4 class="chart-title">Annual Income Trend</h4>
         <div class="chart-container">
@@ -717,75 +716,51 @@ $conn->close();
         </div>
       </div>
       <div class="div12">
-  <h4 class="chart-title">Income vs Expenses Comparison</h4>
-  <div style="display: flex; gap: 20px;">
-    <div style="flex: 2; min-width: 0;">
-      <div class="chart-container">
-        <canvas id="incomeVsExpensesChart"></canvas>
-      </div>
-    </div>
-    <div style="flex: 1; background: #f9f9f9; padding: 20px; border-radius: 8px; border-left: 4px solid #2f8656;">
-      <h5 style="margin-top: 0; color: #333; border-bottom: 1px solid #eee; padding-bottom: 10px;">Financial Summary</h5>
-      
-      <div style="margin-bottom: 15px;">
-        <div style="font-weight: 600; color: #333; margin-bottom: 5px;">Net Income:</div>
-        <div style="display: flex; justify-content: space-between;">
-          <span>First Semester:</span>
-          <span style="font-weight: bold; color: <?php echo $net_income_first >= 0 ? '#2f8656' : '#d9534f'; ?>">
-            ₱<?php echo number_format(abs($net_income_first), 2); ?>
-            (<?php echo number_format($profit_loss_first, 1); ?>%)
-          </span>
-        </div>
-        <div style="display: flex; justify-content: space-between;">
-          <span>Second Semester:</span>
-          <span style="font-weight: bold; color: <?php echo $net_income_second >= 0 ? '#2f8656' : '#d9534f'; ?>">
-            ₱<?php echo number_format(abs($net_income_second), 2); ?>
-            (<?php echo number_format($profit_loss_second, 1); ?>%)
-          </span>
-        </div>
-        <div style="display: flex; justify-content: space-between; margin-top: 5px; border-top: 1px solid #eee; padding-top: 5px;">
-          <span>Total:</span>
-          <span style="font-weight: bold; color: <?php echo $total_net_income >= 0 ? '#2f8656' : '#d9534f'; ?>">
-            ₱<?php echo number_format(abs($total_net_income), 2); ?>
-          </span>
+        <h4 class="chart-title">Income vs Expenses (<?php echo htmlspecialchars($current_semester); ?> Semester)</h4>
+        <div class="chart-container">
+          <canvas id="incomeVsExpensesChart"></canvas>
         </div>
       </div>
-      
-      <div style="margin-bottom: 15px;">
-            <div style="font-weight: 600; color: #333; margin-bottom: 5px;">Expense Ratio:</div>
+      <div class="div13">
+        <div class="financial">
+          <h5 style="margin-top: 0; color: #333; border-bottom: 1px solid #eee; padding-bottom: 10px;">Financial Summary (<?php echo htmlspecialchars($current_semester); ?> Semester)</h5>
+          <div style="margin-bottom: 15px;">
+            <div style="font-weight: 600; color: #333; margin-bottom: 5px;">Net Income:</div>
             <div style="display: flex; justify-content: space-between;">
-              <span>First Semester:</span>
-              <span style="font-weight: bold;"><?php echo number_format($expense_ratio_first, 1); ?>%</span>
-            </div>
-            <div style="display: flex; justify-content: space-between;">
-              <span>Second Semester:</span>
-              <span style="font-weight: bold;"><?php echo number_format($expense_ratio_second, 1); ?>%</span>
+              <span><?php echo htmlspecialchars($current_semester); ?> Semester:</span>
+              <span style="font-weight: bold; color: <?php echo $net_income >= 0 ? '#2f8656' : '#d9534f'; ?>">
+                ₱<?php echo number_format(abs($net_income), 2); ?>
+                (<?php echo number_format($profit_loss, 1); ?>%)
+              </span>
             </div>
           </div>
-          
+          <div style="margin-bottom: 15px;">
+            <div style="font-weight: 600; color: #333; margin-bottom: 5px;">Expense Ratio:</div>
+            <div style="display: flex; justify-content: space-between;">
+              <span><?php echo htmlspecialchars($current_semester); ?> Semester:</span>
+              <span style="font-weight: bold;"><?php echo number_format($expense_ratio, 1); ?>%</span>
+            </div>
+          </div>
           <div>
             <div style="font-weight: 600; color: #333; margin-bottom: 5px;">Key Observations:</div>
             <ul style="padding-left: 20px; margin: 0; font-size: 14px;">
-              <?php if ($net_income_first < 0): ?>
-                <li>First semester had a loss of ₱<?php echo number_format(abs($net_income_first), 2); ?></li>
+              <?php if ($net_income < 0): ?>
+                <li><?php echo htmlspecialchars($current_semester); ?> semester had a loss of ₱<?php echo number_format(abs($net_income), 2); ?></li>
               <?php endif; ?>
-              <?php if ($net_income_second < 0): ?>
-                <li>Second semester had a loss of ₱<?php echo number_format(abs($net_income_second), 2); ?></li>
+              <?php if ($expense_ratio > 100): ?>
+                <li><?php echo htmlspecialchars($current_semester); ?> semester expenses exceeded income</li>
               <?php endif; ?>
-              <?php if ($expense_ratio_first > 100): ?>
-                <li>First semester expenses exceeded income</li>
-              <?php endif; ?>
-              <?php if ($expense_ratio_second > 100): ?>
-                <li>Second semester expenses exceeded income</li>
-              <?php endif; ?>
-              <?php if ($net_income_first >= 0 && $net_income_second >= 0): ?>
-                <li>Both semesters were profitable</li>
+              <?php if ($net_income >= 0): ?>
+                <li><?php echo htmlspecialchars($current_semester); ?> semester was profitable</li>
               <?php endif; ?>
             </ul>
           </div>
         </div>
       </div>
     </div>
+    <?php
+    ob_end_flush(); // End output buffering
+    ?>
     <script>
       document.addEventListener('DOMContentLoaded', function() {
         function getCanvasContext(id) {
@@ -989,16 +964,16 @@ $conn->close();
           new Chart(ctxComparison, {
             type: 'bar',
             data: {
-              labels: ['First Semester', 'Second Semester'],
+              labels: ['<?php echo htmlspecialchars($current_semester); ?> Semester'],
               datasets: [{
                 label: 'Income',
-                data: [<?php echo $income_data['First']; ?>, <?php echo $income_data['Second']; ?>],
+                data: [<?php echo $income_data[$current_semester]; ?>],
                 backgroundColor: '#2f8656',
                 borderColor: '#2f8656',
                 borderWidth: 1
               }, {
                 label: 'Expenses',
-                data: [<?php echo $expenses_data['First']; ?>, <?php echo $expenses_data['Second']; ?>],
+                data: [<?php echo $expenses_data[$current_semester]; ?>],
                 backgroundColor: '#4287f5',
                 borderColor: '#4287f5',
                 borderWidth: 1

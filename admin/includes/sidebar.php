@@ -24,7 +24,7 @@
         <li><a href="expenses.php" class="nav-link"><i class="fa fa-bank me-2"></i>Expenses</a></li>
         <!-- <li><a href="suggestions.php" class="nav-link"><i class="bi bi-lightbulb-fill me-2"></i>Suggestions</a></li> -->
         <li><a href="send-notice.php" class="nav-link"><i class="bi bi-megaphone-fill me-2"></i>Announcement</a></li>
-       
+        <li><a href="manage_guest_stays.php" class="nav-link"><i class="bi bi-people-fill me-2"></i>Guest</a></li>
         <li><a href="migrate.php" class="nav-link"><i class="fa fa-cog me-2"></i>Migrate Tenants</a></li>
         <li><a href="tenant-history.php" class="nav-link"><i class="fa fa-cog me-2"></i>Tenant History</a></li>
          <li><a href="printdocument.php" class="nav-link"><i class="fa fa-print me-2"></i>Print Docs</a></li>

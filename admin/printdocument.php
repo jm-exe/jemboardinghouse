@@ -290,8 +290,8 @@ function fetch_tenant_payment_history($conn, $tenant_id) {
 function fetch_annual_financial_data($conn, $year) {
     $report_data = [];
     $annual_totals = [
-        'tenants_monthly_avg' => 0, 
-        'total_tenant_months' => 0, 
+        'tenants_monthly_avg' => 0,
+        'total_tenant_months' => 0,
         'monthly_payment' => 0,
         'charges' => 0,
         'electric_bill' => 0,
@@ -317,19 +317,33 @@ function fetch_annual_financial_data($conn, $year) {
         $tenants_count = ($row_tenants = $result_tenants->fetch_assoc()) ? (int)$row_tenants['tenant_count'] : 0;
         $stmt_tenants->close();
 
-        // 2. Income - Monthly Payment (Rent)
+        // 2. Income - Monthly Payment (Base Rent) and Surcharges
+        $monthly_rent_income = 0.00;
+        $surcharges = 0.00;
         $stmt_rent = $conn->prepare("
-            SELECT SUM(p.payment_amount) as total_rent
+            SELECT p.payment_amount, b.monthly_rent
             FROM payments p
+            JOIN boarding bo ON p.boarding_id = bo.boarding_id
+            JOIN beds b ON bo.bed_id = b.bed_id
             WHERE YEAR(p.payment_date) = ? AND MONTH(p.payment_date) = ?
         ");
         $stmt_rent->bind_param("ii", $year, $month_num);
         $stmt_rent->execute();
         $result_rent = $stmt_rent->get_result();
-        $monthly_rent_income = ($row_rent = $result_rent->fetch_assoc()) ? (float)$row_rent['total_rent'] : 0.00;
+        while ($row_rent = $result_rent->fetch_assoc()) {
+            $payment_amount = (float)($row_rent['payment_amount'] ?? 0.00);
+            $monthly_rent = (float)($row_rent['monthly_rent'] ?? 1100.00); // Default to 1100 if null
+            // Calculate base rent and surcharges
+            if ($payment_amount > $monthly_rent) {
+                $monthly_rent_income += $monthly_rent; // Base rent only
+                $surcharges += $payment_amount - $monthly_rent; // Excess is surcharge
+            } else {
+                $monthly_rent_income += $payment_amount; // Use full payment if less than rent
+            }
+        }
         $stmt_rent->close();
 
-        // 3. Income - Charges (Appliance + Guest Stays)
+        // 3. Income - Charges (Appliance + Guest Stays + Surcharges)
         $appliance_income = 0.00;
         $stmt_appliance_charges = $conn->prepare("
             SELECT SUM(p.appliance_charges) as total_appliance
@@ -357,11 +371,11 @@ function fetch_annual_financial_data($conn, $year) {
             $guest_income = (float)($row_guest['total_guest'] ?? 0.00);
         }
         $stmt_guest_charges->close();
-        $total_charges_income = $appliance_income + $guest_income;
+        $total_charges_income = $appliance_income + $guest_income + $surcharges;
 
         // 4. Expenses - Electric Bill
         $electric_bill = 0.00;
-        $electric_desc_pattern = '%Electric%'; 
+        $electric_desc_pattern = '%Electric%';
         $stmt_electric = $conn->prepare("
             SELECT SUM(me.amount) as total_electric
             FROM monthly_expenses me
@@ -378,7 +392,7 @@ function fetch_annual_financial_data($conn, $year) {
 
         // 5. Expenses - Water Bill
         $water_bill = 0.00;
-        $water_desc_pattern = '%Water%'; 
+        $water_desc_pattern = '%Water%';
         $stmt_water = $conn->prepare("
             SELECT SUM(me.amount) as total_water
             FROM monthly_expenses me
@@ -419,7 +433,7 @@ function fetch_annual_financial_data($conn, $year) {
     if ($month_count_with_tenants > 0) {
         $annual_totals['tenants_monthly_avg'] = round($annual_totals['total_tenant_months'] / $month_count_with_tenants, 2);
     } else {
-         $annual_totals['tenants_monthly_avg'] = 0; 
+        $annual_totals['tenants_monthly_avg'] = 0;
     }
 
     $annual_net_income = ($annual_totals['monthly_payment'] + $annual_totals['charges']) - $annual_totals['total_expenses'];
@@ -431,7 +445,6 @@ function fetch_annual_financial_data($conn, $year) {
         'year' => $year
     ];
 }
-
 
 $available_academic_years = fetch_academic_years($conn);
 $available_floors = fetch_floors($conn);
